@@ -1,0 +1,12 @@
+{
+  "_comment": "ctx config. Add paths to agent_rules, then run 'bash ctx.sh sync'.",
+  "_usage": "bash ctx.sh help",
+  "source": "sample-context/AGENT_RULES.md",
+  "agent_rules": [
+    { "name": "Claude Code", "path": "CLAUDE.md",      "enabled": true  },
+    { "name": "OpenCode",    "path": "AGENTS.md",       "enabled": true  },
+    { "name": "Cursor",      "path": ".cursorrules",    "enabled": false },
+    { "name": "Gemini CLI",  "path": "GEMINI.md",       "enabled": false },
+    { "name": "Codex",       "path": "CODEX.md",        "enabled": false }
+  ]
+}
