@@ -53,6 +53,8 @@ GEMINI.md ──┘
 
 Register agent rule file paths in `ctx.config.json`, run `ctx sync`, and all rule files become symlinks pointing to `AGENT_RULES.md`. Edit that one file and every agent picks up the change instantly.
 
+`ctx.config.json` also defines the context directory through `source`. By default this is `sample-context/AGENT_RULES.md`, but projects can point it at another directory such as `docs/context/AGENT_RULES.md`; `status`, `sync`, `export`, `generate`, `log`, and `timeline` will follow that context directory.
+
 ---
 
 ## Commands
@@ -63,6 +65,9 @@ Register agent rule file paths in `ctx.config.json`, run `ctx sync`, and all rul
 | `bash ctx.sh status` | Show symlink status + project summary from MASTER_PLAN |
 | `bash ctx.sh sync` | Rebuild symlinks + auto-update Last Updated date |
 | `bash ctx.sh export` | Print full context for web LLMs (Claude.ai, ChatGPT, etc.) |
+| `bash ctx.sh generate <type>` | Collect configured source files into a generated context bundle |
+| `bash ctx.sh log --summary "..."` | Record a commit/work-unit summary in `<context>/work-log/timeline.jsonl` |
+| `bash ctx.sh timeline --limit 20` | Show recent work-log entries |
 | `bash ctx.sh list` | List all agents and their enabled status |
 | `bash ctx.sh enable <n>` | Enable a specific agent |
 | `bash ctx.sh disable <n>` | Disable a specific agent |
@@ -82,6 +87,9 @@ your-project/
     ├── MASTER_PLAN.md           ← Current state + next actions
     ├── decisions.md             ← Architecture decision records (ADR)
     ├── backlog.md               ← Ideas + future tasks
+    ├── generated/                ← Output from ctx generate
+    ├── work-log/
+    │   └── timeline.jsonl        ← Append-only work-unit timeline
     └── visuals/                 ← Mermaid diagrams, etc.
 ```
 
@@ -93,10 +101,22 @@ Add an entry to `agent_rules` in `ctx.config.json`:
 
 ```json
 {
+  "source": "sample-context/AGENT_RULES.md",
+  "generate": {
+    "project": {
+      "output": "sample-context/generated/project-raw.md",
+      "collect": [
+        "README.md",
+        "docs/**/*.md",
+        "src/**/*"
+      ]
+    }
+  },
   "agent_rules": [
-    { "name": "Claude Code", "path": "CLAUDE.md",   "enabled": true },
-    { "name": "Cursor",      "path": ".cursorrules", "enabled": true },
-    { "name": "My Agent",    "path": "MY_AGENT.md",  "enabled": true }
+    { "name": "Claude",  "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
+    { "name": "AGENTS",  "path": "AGENTS.md",                "enabled": true,  "_note": "OpenCode, Codex, Antigravity and other AGENTS.md-compatible tools" },
+    { "name": "Cursor",  "path": ".cursor/rules/context.mdc", "enabled": false },
+    { "name": "MyAgent", "path": "MY_AGENT.md",              "enabled": true }
   ]
 }
 ```
@@ -111,7 +131,29 @@ To enable or disable without editing the file:
 
 ```bash
 bash ctx.sh enable Cursor
-bash ctx.sh disable "Gemini CLI"
+bash ctx.sh disable Gemini
+```
+
+Keep `name` short because it is used by `enable` and `disable`. Put longer tool notes in `_note`.
+
+To collect more project-specific files, extend `generate.project.collect`:
+
+```json
+{
+  "generate": {
+    "project": {
+      "output": "sample-context/generated/project-raw.md",
+      "collect": [
+        "README.md",
+        "docs/**/*.md",
+        "src/**/*",
+        "app/**/*",
+        "server/**/*",
+        "web/src/**/*"
+      ]
+    }
+  }
+}
 ```
 
 ---
@@ -139,6 +181,19 @@ Records technical decisions in ADR (Architecture Decision Record) format — wha
 
 ### backlog.md
 Captures ideas, future features, and open questions that aren't urgent but shouldn't be lost.
+
+### generated/
+Contains source bundles created by `ctx generate <type>`. Configure each type in `ctx.config.json` under `generate`.
+
+### work-log/
+Contains an append-only `timeline.jsonl` created by `ctx log`. Use it to track commit-level or work-unit summaries without depending on a specific AI session history.
+
+```bash
+bash ctx.sh log --summary "Implemented feedback MVP" --type work
+bash ctx.sh log --commit abc1234 --summary "Release cleanup" --type release
+bash ctx.sh timeline --limit 10
+bash ctx.sh timeline --json
+```
 
 ---
 
@@ -171,10 +226,9 @@ Default configuration includes:
 | Agent | Rule file | Default |
 |-------|-----------|---------|
 | Claude Code | `CLAUDE.md` | ✅ enabled |
-| OpenCode | `AGENTS.md` | ✅ enabled |
-| Cursor | `.cursorrules` | ○ disabled |
-| Gemini CLI | `GEMINI.md` | ○ disabled |
-| Codex | `CODEX.md` | ○ disabled |
+| AGENTS | `AGENTS.md` | ✅ enabled |
+| Cursor | `.cursor/rules/context.mdc` | ○ disabled |
+| Gemini | `GEMINI.md` | ○ disabled |
 
 Any agent that reads a rule file from a fixed path can be added.
 
