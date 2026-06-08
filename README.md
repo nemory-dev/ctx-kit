@@ -4,7 +4,7 @@
 >
 > 🇰🇷 한국어 버전: [README.ko.md](README.ko.md)
 
-When working with multiple AI agents (Claude Code, OpenCode, Cursor, Gemini CLI, etc.), each agent starts a session without knowing what decisions were made, what's already built, or what the current priorities are.
+When working with multiple AI agents (Claude Code, Codex, Antigravity, Cursor, etc.), each agent starts a session without knowing what decisions were made, what's already built, or what the current priorities are.
 
 ```
 Problem: Every agent starts blind → repeated explanations, forgotten decisions, inconsistent direction
@@ -115,10 +115,11 @@ Add an entry to `agent_rules` in `ctx.config.json`:
     }
   },
   "agent_rules": [
-    { "name": "Claude",  "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
-    { "name": "AGENTS",  "path": "AGENTS.md",                "enabled": true,  "_note": "OpenCode, Codex, Antigravity and other AGENTS.md-compatible tools" },
-    { "name": "Cursor",  "path": ".cursor/rules/context.mdc", "enabled": false },
-    { "name": "MyAgent", "path": "MY_AGENT.md",              "enabled": true }
+    { "name": "Claude",      "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
+    { "name": "Codex",       "path": "AGENTS.md",                "enabled": true,  "_note": "OpenAI Codex (AGENTS.md spec)" },
+    { "name": "Antigravity", "path": "AGENTS.md",                "enabled": true,  "_note": "Google Antigravity (shares AGENTS.md with Codex)" },
+    { "name": "Cursor",      "path": ".cursor/rules/context.mdc", "enabled": true,  "_note": "Cursor IDE" },
+    { "name": "MyAgent",     "path": "MY_AGENT.md",              "enabled": false }
   ]
 }
 ```
@@ -133,10 +134,12 @@ To enable or disable without editing the file:
 
 ```bash
 bash ctx.sh enable Cursor
-bash ctx.sh disable Gemini
+bash ctx.sh disable Antigravity
 ```
 
 Keep `name` short because it is used by `enable` and `disable`. Put longer tool notes in `_note`.
+
+When two agents share the same rule file (e.g. Codex and Antigravity both follow the AGENTS.md spec), list them as separate rows pointing to the same `path`. `sync` keeps the symlink as long as at least one of them is enabled.
 
 To collect more project-specific files, extend `generate.project.collect`:
 
@@ -227,10 +230,10 @@ Default configuration includes:
 
 | Agent | Rule file | Default |
 |-------|-----------|---------|
-| Claude Code | `CLAUDE.md` | ✅ enabled |
-| AGENTS | `AGENTS.md` | ✅ enabled |
-| Cursor | `.cursor/rules/context.mdc` | ○ disabled |
-| Gemini | `GEMINI.md` | ○ disabled |
+| Claude (Claude Code) | `CLAUDE.md` | ✅ enabled |
+| Codex (OpenAI Codex) | `AGENTS.md` | ✅ enabled |
+| Antigravity (Google) | `AGENTS.md` (shared with Codex) | ✅ enabled |
+| Cursor | `.cursor/rules/context.mdc` | ✅ enabled |
 
 Any agent that reads a rule file from a fixed path can be added.
 

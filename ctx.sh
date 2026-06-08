@@ -139,10 +139,10 @@ cmd_init() {
     }
   },
   "agent_rules": [
-    { "name": "Claude", "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
-    { "name": "AGENTS", "path": "AGENTS.md",                "enabled": true,  "_note": "OpenCode, Codex, Antigravity and other AGENTS.md-compatible tools" },
-    { "name": "Cursor", "path": ".cursor/rules/context.mdc", "enabled": false },
-    { "name": "Gemini", "path": "GEMINI.md",                "enabled": false, "_note": "Gemini CLI" }
+    { "name": "Claude",      "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
+    { "name": "Codex",       "path": "AGENTS.md",                "enabled": true,  "_note": "OpenAI Codex (AGENTS.md spec)" },
+    { "name": "Antigravity", "path": "AGENTS.md",                "enabled": true,  "_note": "Google Antigravity (shares AGENTS.md with Codex)" },
+    { "name": "Cursor",      "path": ".cursor/rules/context.mdc", "enabled": true,  "_note": "Cursor IDE" }
   ]
 }
 CONFIGEOF
@@ -455,6 +455,10 @@ cmd_sync() {
     echo -e "  ${GREEN}✓${NC} MASTER_PLAN.md Last Updated → $TODAY"
   fi
 
+  # Collect enabled paths first so disabled rows that share a path
+  # (e.g. multiple AGENTS.md-spec tools) don't remove an active symlink.
+  ENABLED_PATHS=$(get_agents | awk -F'|' '$3=="True" || $3=="true" {print $2}' | sort -u)
+
   get_agents | while IFS="|" read -r name path enabled; do
     LINK_PATH="$PROJECT_ROOT/$path"
     if [ "$enabled" = "True" ] || [ "$enabled" = "true" ]; then
@@ -464,7 +468,9 @@ cmd_sync() {
       ln -s "$RELATIVE" "$LINK_PATH"
       echo -e "  ${GREEN}✓${NC} $name: $path → $SOURCE"
     else
-      if [ -L "$LINK_PATH" ]; then
+      if echo "$ENABLED_PATHS" | grep -qx "$path"; then
+        echo -e "  ${YELLOW}-${NC} $name ($path) disabled — kept (shared with an enabled agent)"
+      elif [ -L "$LINK_PATH" ]; then
         rm "$LINK_PATH"
         echo -e "  ${YELLOW}-${NC} $name: $path symlink removed (disabled)"
       else

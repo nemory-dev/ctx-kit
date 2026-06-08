@@ -2,7 +2,7 @@
 
 > 모든 AI 에이전트에게 동일한 프로젝트 컨텍스트를 제공하는 경량 CLI.
 
-여러 AI 에이전트(Claude Code, OpenCode, Cursor, Gemini CLI 등)와 함께 작업할 때, 각 에이전트는 어떤 결정이 있었는지, 무엇이 이미 만들어졌는지, 현재 우선순위가 무엇인지 모른 채 세션을 시작합니다.
+여러 AI 에이전트(Claude Code, Codex, Antigravity, Cursor 등)와 함께 작업할 때, 각 에이전트는 어떤 결정이 있었는지, 무엇이 이미 만들어졌는지, 현재 우선순위가 무엇인지 모른 채 세션을 시작합니다.
 
 ```
 문제: 모든 에이전트가 백지 상태로 시작 → 반복 설명, 잊혀지는 결정, 일관되지 않은 방향
@@ -115,10 +115,11 @@ your-project/
     }
   },
   "agent_rules": [
-    { "name": "Claude",  "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
-    { "name": "AGENTS",  "path": "AGENTS.md",                "enabled": true,  "_note": "OpenCode, Codex, Antigravity 등 AGENTS.md 호환 도구" },
-    { "name": "Cursor",  "path": ".cursor/rules/context.mdc", "enabled": false },
-    { "name": "MyAgent", "path": "MY_AGENT.md",              "enabled": true }
+    { "name": "Claude",      "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
+    { "name": "Codex",       "path": "AGENTS.md",                "enabled": true,  "_note": "OpenAI Codex (AGENTS.md 스펙)" },
+    { "name": "Antigravity", "path": "AGENTS.md",                "enabled": true,  "_note": "Google Antigravity (Codex와 AGENTS.md 공유)" },
+    { "name": "Cursor",      "path": ".cursor/rules/context.mdc", "enabled": true,  "_note": "Cursor IDE" },
+    { "name": "MyAgent",     "path": "MY_AGENT.md",              "enabled": false }
   ]
 }
 ```
@@ -133,10 +134,12 @@ bash ctx.sh sync
 
 ```bash
 bash ctx.sh enable Cursor
-bash ctx.sh disable Gemini
+bash ctx.sh disable Antigravity
 ```
 
 `name`은 `enable`/`disable` 인자로 쓰이므로 짧게 유지하세요. 긴 도구 설명은 `_note`에 적습니다.
+
+두 에이전트가 같은 룰 파일을 공유하는 경우(예: Codex와 Antigravity는 모두 AGENTS.md 스펙을 따름), 같은 `path`를 가리키는 별도 행으로 등록하세요. `sync`는 둘 중 하나라도 enabled면 심볼릭 링크를 유지합니다.
 
 프로젝트 고유 파일을 더 수집하려면 `generate.project.collect`를 확장하세요:
 
@@ -227,10 +230,10 @@ Add to sample-context/decisions.md:
 
 | 에이전트 | 룰 파일 | 기본값 |
 |----------|---------|--------|
-| Claude Code | `CLAUDE.md` | ✅ 활성화 |
-| AGENTS | `AGENTS.md` | ✅ 활성화 |
-| Cursor | `.cursor/rules/context.mdc` | ○ 비활성화 |
-| Gemini | `GEMINI.md` | ○ 비활성화 |
+| Claude (Claude Code) | `CLAUDE.md` | ✅ 활성화 |
+| Codex (OpenAI Codex) | `AGENTS.md` | ✅ 활성화 |
+| Antigravity (Google) | `AGENTS.md` (Codex와 공유) | ✅ 활성화 |
+| Cursor | `.cursor/rules/context.mdc` | ✅ 활성화 |
 
 고정된 경로에서 룰 파일을 읽는 모든 에이전트를 추가할 수 있습니다.
 
