@@ -1,6 +1,8 @@
 # ctx-kit
 
 > A lightweight CLI that gives all your AI agents the same project context.
+>
+> 🇰🇷 한국어 버전: [README.ko.md](README.ko.md)
 
 When working with multiple AI agents (Claude Code, OpenCode, Cursor, Gemini CLI, etc.), each agent starts a session without knowing what decisions were made, what's already built, or what the current priorities are.
 
