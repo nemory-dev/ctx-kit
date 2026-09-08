@@ -68,6 +68,10 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 # ── Utils ──────────────────────────────────────────────
+ctx_git() {
+  git -c safe.directory=* -C "$CONTEXT_DIR" "$@"
+}
+
 require_python() {
   if ! command -v python3 &>/dev/null; then
     echo -e "${RED}Error: python3 is required.${NC}" >&2; exit 1
@@ -1150,9 +1154,9 @@ _hook_install() {
   # 2) Initialize independent Git in context directory
   mkdir -p "$CONTEXT_DIR"
   if [ ! -d "$CONTEXT_DIR/.git" ]; then
-    git -C "$CONTEXT_DIR" init --quiet
-    git -C "$CONTEXT_DIR" add -A
-    git -C "$CONTEXT_DIR" commit -m "chore: initialize local context repository" --quiet 2>/dev/null || true
+    ctx_git init --quiet
+    ctx_git add -A
+    ctx_git commit -m "chore: initialize local context repository" --quiet 2>/dev/null || true
     echo -e "  ${GREEN}✓${NC} Initialized independent Git repository in ${rel_context_dir}/"
   else
     echo -e "  ${YELLOW}~${NC} ${rel_context_dir}/ is already an initialized Git repo"
@@ -1284,7 +1288,7 @@ print(f\"{gs.get('enabled', False)}|{gs.get('auto_log', False)}\")")
 
   if [ -d "$CONTEXT_DIR/.git" ]; then
     local ctx_commits
-    ctx_commits=$(git -C "$CONTEXT_DIR" rev-list --count HEAD 2>/dev/null || echo "0")
+    ctx_commits=$(ctx_git rev-list --count HEAD 2>/dev/null || echo "0")
     echo -e "  Local Git repo:  ${GREEN}Active${NC} (${ctx_commits} local commit(s))"
   else
     echo -e "  Local Git repo:  ${RED}Not initialized${NC}"
@@ -1372,11 +1376,11 @@ PYEOF
   fi
 
   if [ -d "$CONTEXT_DIR/.git" ]; then
-    git -C "$CONTEXT_DIR" add -A
-    if ! git -C "$CONTEXT_DIR" diff-index --quiet HEAD -- 2>/dev/null; then
+    ctx_git add -A
+    if ! ctx_git diff-index --quiet HEAD -- 2>/dev/null; then
       local timestamp
       timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-      git -C "$CONTEXT_DIR" commit -m "Auto-sync local context ($timestamp)" --quiet
+      ctx_git commit -m "Auto-sync local context ($timestamp)" --quiet
       echo -e "[ctx] 🔒 Auto-committed local context (${rel_context_dir}) to local Git."
     fi
   fi
