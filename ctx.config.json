@@ -2,6 +2,10 @@
   "_comment": "ctx config. Add paths to agent_rules, then run 'bash ctx.sh sync'.",
   "_usage": "bash ctx.sh help",
   "source": "sample-context/AGENT_RULES.md",
+  "git_sync": {
+    "enabled": true,
+    "auto_log": true
+  },
   "generate": {
     "project": {
       "output": "sample-context/generated/project-raw.md",
@@ -13,9 +17,29 @@
     }
   },
   "agent_rules": [
-    { "name": "Claude",      "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
-    { "name": "Codex",       "path": "AGENTS.md",                "enabled": true,  "_note": "OpenAI Codex (AGENTS.md spec)" },
-    { "name": "Antigravity", "path": "AGENTS.md",                "enabled": true,  "_note": "Google Antigravity (shares AGENTS.md with Codex)" },
-    { "name": "Cursor",      "path": ".cursor/rules/context.mdc", "enabled": true,  "_note": "Cursor IDE" }
+    {
+      "name": "Claude",
+      "path": "CLAUDE.md",
+      "enabled": true,
+      "_note": "Claude Code"
+    },
+    {
+      "name": "Codex",
+      "path": "AGENTS.md",
+      "enabled": true,
+      "_note": "OpenAI Codex (AGENTS.md spec)"
+    },
+    {
+      "name": "Antigravity",
+      "path": "AGENTS.md",
+      "enabled": true,
+      "_note": "Google Antigravity (shares AGENTS.md with Codex)"
+    },
+    {
+      "name": "Cursor",
+      "path": ".cursor/rules/context.mdc",
+      "enabled": true,
+      "_note": "Cursor IDE"
+    }
   ]
 }

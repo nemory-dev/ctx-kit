@@ -8,7 +8,18 @@
 
 set -e
 
-VERSION="1.0.0"
+# Windows compatibility for path translation in Python
+py_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
+VERSION="1.1.0"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -53,7 +64,7 @@ resolve_context_dir() {
   require_python
   local source_dir
   source_dir=$(python3 -c "import json, os
-with open('$CONFIG') as f: d=json.load(f)
+with open('$(py_path "$CONFIG")') as f: d=json.load(f)
 print(os.path.dirname(d.get('source', 'sample-context/AGENT_RULES.md')) or 'sample-context')")
   CONTEXT_DIR="$PROJECT_ROOT/$source_dir"
 }
@@ -61,14 +72,14 @@ print(os.path.dirname(d.get('source', 'sample-context/AGENT_RULES.md')) or 'samp
 get_source() {
   require_python
   python3 -c "import json
-with open('$CONFIG') as f: d=json.load(f)
+with open('$(py_path "$CONFIG")') as f: d=json.load(f)
 print(d['source'])"
 }
 
 get_agents() {
   require_python
   python3 -c "import json
-with open('$CONFIG') as f: d=json.load(f)
+with open('$(py_path "$CONFIG")') as f: d=json.load(f)
 for a in d['agent_rules']: print(f\"{a['name']}|{a['path']}|{a['enabled']}\")"
 }
 
@@ -89,11 +100,13 @@ cmd_help() {
   printf "  %-20s %s\n" "generate <type>" "Collect files for LLM context (e.g. generate policy)"
   printf "  %-20s %s\n" "log"            "Record a commit/work-unit summary into context work-log"
   printf "  %-20s %s\n" "timeline"       "Show recorded work-log entries by commit/work unit"
+  printf "  %-20s %s\n" "backfill"       "Backfill past Git commits into context work-log"
+  printf "  %-20s %s\n" "hook [cmd]"     "Manage Git pre-commit hook (install|uninstall|status)"
   printf "  %-20s %s\n" "version"        "Show version"
   printf "  %-20s %s\n" "help"           "Show this help"
   echo ""
   echo -e "${BOLD}Config:${NC}"
-  echo "  ctx.config.json              — Agent rule file paths (edit here to add agents)"
+  echo "  ctx.config.json              — Agent rule file paths & git_sync options"
   echo ""
   echo -e "${BOLD}Context files:${NC}"
   echo "  <context>/AGENT_RULES.md  — Agent behavior rules (single source of truth)"
@@ -110,11 +123,25 @@ cmd_help() {
   echo "  bash ctx.sh export          # Copy context for web LLM"
   echo "  bash ctx.sh log --summary \"Implemented feedback MVP\""
   echo "  bash ctx.sh timeline --limit 10"
+  echo "  bash ctx.sh backfill --limit 30 # Backfill past commits"
+  echo "  bash ctx.sh hook install    # Install Git pre-commit auto-sync hook"
   echo ""
 }
 
 # ── init ───────────────────────────────────────────────
 cmd_init() {
+  local AUTO_BACKFILL=""
+  local AUTO_HOOK=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --backfill)    AUTO_BACKFILL="true"; shift ;;
+      --no-backfill) AUTO_BACKFILL="false"; shift ;;
+      --hook)        AUTO_HOOK="true"; shift ;;
+      --no-hook)     AUTO_HOOK="false"; shift ;;
+      *) shift ;;
+    esac
+  done
+
   echo -e "${BOLD}[ctx init] Initializing context structure${NC}"
   echo ""
 
@@ -128,6 +155,10 @@ cmd_init() {
   "_comment": "ctx config. Add paths to agent_rules, then run ctx sync.",
   "_usage": "bash ctx.sh help",
   "source": "sample-context/AGENT_RULES.md",
+  "git_sync": {
+    "enabled": true,
+    "auto_log": true
+  },
   "generate": {
     "project": {
       "output": "sample-context/generated/project-raw.md",
@@ -356,6 +387,54 @@ EOF
   echo "  4. $context_label/backlog.md     — [Project Name]"
   echo ""
   echo -e "  Then tell your agent: ${CYAN}\"Read MASTER_PLAN.md and get started\"${NC}"
+
+  # 5) Git Hook & Backfill setup
+  if [ -d "$PROJECT_ROOT/.git" ]; then
+    echo ""
+    echo -e "${BOLD}[ctx init] Git Integration${NC}"
+    local commit_count
+    commit_count=$(git -C "$PROJECT_ROOT" rev-list --count HEAD 2>/dev/null || echo "0")
+    if [ "$commit_count" -gt 0 ]; then
+      local do_backfill="false"
+      if [ "$AUTO_BACKFILL" = "true" ]; then
+        do_backfill="true"
+      elif [ "$AUTO_BACKFILL" = "false" ]; then
+        do_backfill="false"
+      else
+        echo -e "  🔍 Existing Git history detected (${CYAN}${commit_count} commit(s)${NC})."
+        local bf_ans="n"
+        if [ -t 0 ] || [ -e /dev/tty ]; then
+          read -r -p "  Would you like to backfill past commits into timeline.jsonl? [y/N]: " bf_ans </dev/tty 2>/dev/null || bf_ans="n"
+        fi
+        if [[ "$bf_ans" =~ ^[Yy]$ ]]; then
+          do_backfill="true"
+        fi
+      fi
+
+      if [ "$do_backfill" = "true" ]; then
+        cmd_backfill --limit 30
+      fi
+    fi
+
+    local do_hook="true"
+    if [ "$AUTO_HOOK" = "true" ]; then
+      do_hook="true"
+    elif [ "$AUTO_HOOK" = "false" ]; then
+      do_hook="false"
+    else
+      local hk_ans="y"
+      if [ -t 0 ] || [ -e /dev/tty ]; then
+        read -r -p "  Install Git pre-commit hook to auto-sync ${context_label}? [Y/n]: " hk_ans </dev/tty 2>/dev/null || hk_ans="y"
+      fi
+      if [[ "$hk_ans" =~ ^[Nn]$ ]]; then
+        do_hook="false"
+      fi
+    fi
+
+    if [ "$do_hook" = "true" ]; then
+      _hook_install
+    fi
+  fi
 }
 
 # Helper: create file only if it doesn't exist
@@ -716,7 +795,7 @@ cmd_log() {
   local CTX_COMMAND="bash ${SCRIPT_PATH#$PROJECT_ROOT/}"
   mkdir -p "$LOG_DIR"
 
-  CTX_ROOT="$PROJECT_ROOT" CTX_LOG_FILE="$LOG_FILE" CTX_SUMMARY="$SUMMARY" CTX_TITLE="$TITLE" CTX_COMMIT="$COMMIT" CTX_FILES="$FILES" CTX_TYPE="$TYPE" CTX_COMMAND="$CTX_COMMAND" python3 << 'PYEOF'
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_SUMMARY="$SUMMARY" CTX_TITLE="$TITLE" CTX_COMMIT="$COMMIT" CTX_FILES="$FILES" CTX_TYPE="$TYPE" CTX_COMMAND="$CTX_COMMAND" python3 << 'PYEOF'
 import json
 import os
 import subprocess
@@ -812,7 +891,7 @@ cmd_timeline() {
     return 0
   fi
 
-  CTX_ROOT="$PROJECT_ROOT" CTX_LOG_FILE="$LOG_FILE" CTX_LIMIT="$LIMIT" CTX_COMMIT="$COMMIT" CTX_JSON="$JSON_MODE" python3 << 'PYEOF'
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_LIMIT="$LIMIT" CTX_COMMIT="$COMMIT" CTX_JSON="$JSON_MODE" python3 << 'PYEOF'
 import json
 import os
 
@@ -867,6 +946,426 @@ for entry in entries:
 PYEOF
 }
 
+# ── backfill ───────────────────────────────────────────
+cmd_backfill() {
+  require_config
+  resolve_context_dir
+  require_python
+
+  local LIMIT="30" ALL_MODE="false" TYPE="work"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --limit|-n) LIMIT="$2"; shift 2 ;;
+      --all)      ALL_MODE="true"; shift ;;
+      --type)     TYPE="$2"; shift 2 ;;
+      --help|-h)
+        echo "Usage: bash ctx.sh backfill [--limit 30] [--all] [--type work|docs]"
+        return 0
+        ;;
+      *) echo "Unknown option: $1"; return 1 ;;
+    esac
+  done
+
+  if ! git -C "$PROJECT_ROOT" rev-parse HEAD >/dev/null 2>&1; then
+    echo -e "${YELLOW}No Git commits found to backfill.${NC}"
+    return 0
+  fi
+
+  local LOG_DIR="$CONTEXT_DIR/work-log"
+  local LOG_FILE="$LOG_DIR/timeline.jsonl"
+  mkdir -p "$LOG_DIR"
+
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_LIMIT="$LIMIT" CTX_ALL="$ALL_MODE" CTX_TYPE="$TYPE" python3 << 'PYEOF'
+import json
+import os
+import subprocess
+from datetime import datetime, timezone
+
+root = os.environ["CTX_ROOT"]
+log_file = os.environ["CTX_LOG_FILE"]
+limit = int(os.environ["CTX_LIMIT"])
+all_mode = os.environ["CTX_ALL"] == "true"
+entry_type = os.environ["CTX_TYPE"]
+
+existing_commits = set()
+existing_entries = []
+if os.path.exists(log_file):
+    with open(log_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    entry = json.loads(line)
+                    existing_entries.append(entry)
+                    if entry.get("fullCommit"):
+                        existing_commits.add(entry["fullCommit"])
+                    if entry.get("commit"):
+                        existing_commits.add(entry["commit"])
+                except Exception:
+                    pass
+
+git_cmd = ["git", "-C", root, "log", "--date=iso-strict"]
+if not all_mode:
+    git_cmd.extend(["-n", str(limit)])
+
+git_cmd.extend(["--format=__CTX_COMMIT_START__%n%H%n%h%n%ad%n%s%n%b%n__CTX_FILES__", "--name-only"])
+
+try:
+    raw_log = subprocess.check_output(git_cmd, text=True, stderr=subprocess.DEVNULL)
+except Exception as e:
+    print(f"Error reading git log: {e}")
+    raise SystemExit(1)
+
+raw_commits = raw_log.split("__CTX_COMMIT_START__\n")
+new_entries = []
+
+for block in raw_commits:
+    block = block.strip()
+    if not block:
+        continue
+
+    parts = block.split("__CTX_FILES__\n")
+    header_part = parts[0].strip()
+    files_part = parts[1].strip() if len(parts) > 1 else ""
+
+    lines = header_part.splitlines()
+    if len(lines) < 4:
+        continue
+
+    full_commit = lines[0].strip()
+    short_commit = lines[1].strip()
+    date_str = lines[2].strip()
+    subject = lines[3].strip()
+    body = "\n".join(lines[4:]).strip() if len(lines) > 4 else ""
+
+    if full_commit in existing_commits or short_commit in existing_commits:
+        continue
+
+    files = [f.strip() for f in files_part.splitlines() if f.strip()]
+
+    try:
+        dt = datetime.fromisoformat(date_str)
+        created_at = dt.astimezone(timezone.utc).isoformat()
+        ts_id = dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    except Exception:
+        created_at = date_str
+        ts_id = "historic"
+
+    summary = f"{subject}\n\n{body}".strip() if body else subject
+
+    entry = {
+        "id": f"{ts_id}-{short_commit}",
+        "createdAt": created_at,
+        "type": entry_type,
+        "title": subject or f"Commit {short_commit}",
+        "summary": summary,
+        "commit": short_commit,
+        "fullCommit": full_commit,
+        "branch": "",
+        "dirty": False,
+        "files": files,
+    }
+    new_entries.append(entry)
+
+if not new_entries:
+    print(f"[ctx backfill] No new Git commits to backfill (already up to date).")
+    raise SystemExit(0)
+
+all_combined = existing_entries + new_entries
+all_combined.sort(key=lambda x: x.get("createdAt", ""))
+
+with open(log_file, "w", encoding="utf-8") as f:
+    for entry in all_combined:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+readme = os.path.join(os.path.dirname(log_file), "README.md")
+if not os.path.exists(readme):
+    with open(readme, "w", encoding="utf-8") as f:
+        f.write("# Work Log\n\n")
+        f.write("Commit/work-unit timeline generated by `ctx log` & `ctx backfill`.\n\n")
+        f.write("- Source of truth: `timeline.jsonl`\n")
+        f.write("- View: `ctx timeline --limit 20`\n")
+
+print(f"[ctx backfill] ✓ Backfilled {len(new_entries)} commit(s) into timeline.jsonl")
+PYEOF
+}
+
+# ── hook ───────────────────────────────────────────────
+cmd_hook() {
+  case "${1:-status}" in
+    install)   _hook_install ;;
+    uninstall) _hook_uninstall ;;
+    status)    _hook_status ;;
+    *)
+      echo "Usage: bash ctx.sh hook [install|uninstall|status]"
+      return 1
+      ;;
+  esac
+}
+
+_hook_install() {
+  require_config
+  resolve_context_dir
+
+  if [ ! -d "$PROJECT_ROOT/.git" ]; then
+    echo -e "${RED}Error: $PROJECT_ROOT is not a Git repository (.git not found).${NC}" >&2
+    return 1
+  fi
+
+  local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
+  echo -e "${BOLD}[ctx hook install] Configuring Git integration for '${rel_context_dir}'${NC}"
+
+  # 1) Add to .gitignore
+  local gitignore="$PROJECT_ROOT/.gitignore"
+  local escaped_rel
+  escaped_rel="$(printf '%s' "$rel_context_dir" | sed 's/[][\/.^$*]/\\&/g')"
+  if [ ! -f "$gitignore" ] || ! grep -q -E "^\s*${escaped_rel}/?\s*$" "$gitignore" 2>/dev/null; then
+    printf "\n# Local private AI context (ctx-kit, never pushed)\n${rel_context_dir}/\n" >> "$gitignore"
+    echo -e "  ${GREEN}✓${NC} Added ${rel_context_dir}/ to .gitignore"
+  else
+    echo -e "  ${YELLOW}~${NC} ${rel_context_dir}/ already ignored in .gitignore"
+  fi
+
+  # 2) Initialize independent Git in context directory
+  mkdir -p "$CONTEXT_DIR"
+  if [ ! -d "$CONTEXT_DIR/.git" ]; then
+    git -C "$CONTEXT_DIR" init --quiet
+    git -C "$CONTEXT_DIR" add -A
+    git -C "$CONTEXT_DIR" commit -m "chore: initialize local context repository" --quiet 2>/dev/null || true
+    echo -e "  ${GREEN}✓${NC} Initialized independent Git repository in ${rel_context_dir}/"
+  else
+    echo -e "  ${YELLOW}~${NC} ${rel_context_dir}/ is already an initialized Git repo"
+  fi
+
+  # 3) Ensure git_sync is enabled in ctx.config.json
+  CTX_CONFIG="$(py_path "$CONFIG")" python3 << 'PYEOF'
+import json
+import os
+cfg_file = os.environ["CTX_CONFIG"]
+with open(cfg_file, encoding="utf-8") as f:
+    data = json.load(f)
+if "git_sync" not in data or not isinstance(data["git_sync"], dict):
+    data["git_sync"] = {}
+data["git_sync"]["enabled"] = True
+if "auto_log" not in data["git_sync"]:
+    data["git_sync"]["auto_log"] = True
+with open(cfg_file, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+PYEOF
+  echo -e "  ${GREEN}✓${NC} Enabled git_sync in ctx.config.json (auto_log: true)"
+
+  # 4) Install pre-commit hook in .git/hooks/pre-commit
+  local hooks_dir="$PROJECT_ROOT/.git/hooks"
+  local hook_file="$hooks_dir/pre-commit"
+  mkdir -p "$hooks_dir"
+
+  local HOOK_BEGIN="# --- BEGIN CTX-KIT GIT-SYNC HOOK ---"
+  local HOOK_END="# --- END CTX-KIT GIT-SYNC HOOK ---"
+
+  if [ -f "$hook_file" ] && grep -q "$HOOK_BEGIN" "$hook_file"; then
+    echo -e "  ${YELLOW}~${NC} Pre-commit hook already installed in .git/hooks/pre-commit"
+  else
+    if [ ! -f "$hook_file" ]; then
+      echo "#!/bin/sh" > "$hook_file"
+    fi
+    cat >> "$hook_file" << 'HOOKEOF'
+
+# --- BEGIN CTX-KIT GIT-SYNC HOOK ---
+if [ -f "ctx.sh" ]; then
+  bash ctx.sh _hook_run_pre_commit
+elif [ -f "scripts/ctx.sh" ]; then
+  bash scripts/ctx.sh _hook_run_pre_commit
+fi
+# --- END CTX-KIT GIT-SYNC HOOK ---
+HOOKEOF
+    chmod +x "$hook_file" 2>/dev/null || true
+    echo -e "  ${GREEN}✓${NC} Installed pre-commit hook in .git/hooks/pre-commit"
+  fi
+
+  echo -e "\n${GREEN}🎉 Git sync hook setup complete!${NC}"
+  echo "  - Changes in ${rel_context_dir}/ will be auto-committed locally on 'git commit'"
+  echo "  - auto_log is ENABLED: commit changes will be summarized into timeline.jsonl before each commit"
+  echo "  - (To disable auto-log, set \"auto_log\": false under \"git_sync\" in ctx.config.json)"
+}
+
+_hook_uninstall() {
+  require_config
+  local hook_file="$PROJECT_ROOT/.git/hooks/pre-commit"
+  local HOOK_BEGIN="# --- BEGIN CTX-KIT GIT-SYNC HOOK ---"
+  local HOOK_END="# --- END CTX-KIT GIT-SYNC HOOK ---"
+
+  if [ -f "$hook_file" ] && grep -q "$HOOK_BEGIN" "$hook_file"; then
+    python3 -c "
+with open('$hook_file', 'r', encoding='utf-8') as f:
+    content = f.read()
+import re
+pattern = re.compile(r'\n?# --- BEGIN CTX-KIT GIT-SYNC HOOK ---.*?# --- END CTX-KIT GIT-SYNC HOOK ---\n?', re.DOTALL)
+new_content = pattern.sub('', content).strip()
+with open('$hook_file', 'w', encoding='utf-8') as f:
+    f.write(new_content + ('\n' if new_content else ''))
+"
+    echo -e "  ${GREEN}✓${NC} Removed ctx-kit hook from .git/hooks/pre-commit"
+  else
+    echo -e "  ${YELLOW}~${NC} ctx-kit hook is not installed in .git/hooks/pre-commit"
+  fi
+
+  CTX_CONFIG="$(py_path "$CONFIG")" python3 << 'PYEOF'
+import json
+import os
+cfg_file = os.environ["CTX_CONFIG"]
+with open(cfg_file, encoding="utf-8") as f:
+    data = json.load(f)
+if "git_sync" in data and isinstance(data["git_sync"], dict):
+    data["git_sync"]["enabled"] = False
+with open(cfg_file, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+PYEOF
+  echo -e "  ${GREEN}✓${NC} Disabled git_sync in ctx.config.json"
+}
+
+_hook_status() {
+  require_config
+  resolve_context_dir
+  local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
+  local hook_file="$PROJECT_ROOT/.git/hooks/pre-commit"
+  local HOOK_BEGIN="# --- BEGIN CTX-KIT GIT-SYNC HOOK ---"
+
+  echo -e "${BOLD}[ctx hook status]${NC}"
+  echo "  Project root:    $PROJECT_ROOT"
+  echo "  Context dir:     $rel_context_dir"
+
+  local cfg_status
+  cfg_status=$(python3 -c "
+import json
+with open('$(py_path "$CONFIG")') as f: d=json.load(f)
+gs = d.get('git_sync', {})
+print(f\"{gs.get('enabled', False)}|{gs.get('auto_log', False)}\")")
+  local cfg_enabled="${cfg_status%|*}"
+  local cfg_autolog="${cfg_status#*|}"
+
+  if [ "$cfg_enabled" = "True" ]; then
+    echo -e "  git_sync:        ${GREEN}Enabled${NC} (auto_log: $cfg_autolog)"
+  else
+    echo -e "  git_sync:        ${YELLOW}Disabled${NC} (auto_log: $cfg_autolog)"
+  fi
+
+  if [ -f "$hook_file" ] && grep -q "$HOOK_BEGIN" "$hook_file"; then
+    echo -e "  pre-commit hook: ${GREEN}Installed${NC} ($hook_file)"
+  else
+    echo -e "  pre-commit hook: ${RED}Not installed${NC}"
+  fi
+
+  local gitignore="$PROJECT_ROOT/.gitignore"
+  local escaped_rel
+  escaped_rel="$(printf '%s' "$rel_context_dir" | sed 's/[][\/.^$*]/\\&/g')"
+  if [ -f "$gitignore" ] && grep -q -E "^\s*${escaped_rel}/?\s*$" "$gitignore" 2>/dev/null; then
+    echo -e "  .gitignore:      ${GREEN}Ignored${NC} (${rel_context_dir}/ is safe from remote push)"
+  else
+    echo -e "  .gitignore:      ${RED}Not ignored!${NC} (Warning: context may be tracked by main repo)"
+  fi
+
+  if [ -d "$CONTEXT_DIR/.git" ]; then
+    local ctx_commits
+    ctx_commits=$(git -C "$CONTEXT_DIR" rev-list --count HEAD 2>/dev/null || echo "0")
+    echo -e "  Local Git repo:  ${GREEN}Active${NC} (${ctx_commits} local commit(s))"
+  else
+    echo -e "  Local Git repo:  ${RED}Not initialized${NC}"
+  fi
+}
+
+_hook_run_pre_commit() {
+  require_config
+  resolve_context_dir
+  require_python
+
+  local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
+
+  local cfg_status
+  cfg_status=$(python3 -c "
+import json
+with open('$(py_path "$CONFIG")') as f: d=json.load(f)
+gs = d.get('git_sync', {})
+print(f\"{gs.get('enabled', False)}|{gs.get('auto_log', False)}\")")
+  local cfg_enabled="${cfg_status%|*}"
+  local cfg_autolog="${cfg_status#*|}"
+
+  if [ "$cfg_enabled" != "True" ]; then
+    exit 0
+  fi
+
+  if [ "$cfg_autolog" = "True" ]; then
+    local staged_files
+    staged_files=$(git -C "$PROJECT_ROOT" diff --cached --name-only 2>/dev/null || true)
+    staged_files=$(echo "$staged_files" | grep -v -E "^\s*$" | grep -v "^${rel_context_dir}/" || true)
+
+    if [ -n "$staged_files" ]; then
+      local LOG_DIR="$CONTEXT_DIR/work-log"
+      local LOG_FILE="$LOG_DIR/timeline.jsonl"
+      mkdir -p "$LOG_DIR"
+
+      CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" python3 << 'PYEOF'
+import json
+import os
+import subprocess
+from datetime import datetime, timezone
+
+root = os.environ["CTX_ROOT"]
+log_file = os.environ["CTX_LOG_FILE"]
+
+def git(args):
+    try:
+        return subprocess.check_output(["git", "-C", root, *args], text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return ""
+
+diff_stat = git(["diff", "--cached", "--stat"])
+staged_names = [f.strip() for f in git(["diff", "--cached", "--name-only"]).splitlines() if f.strip()]
+branch = git(["branch", "--show-current"])
+
+if staged_names:
+    short_files = staged_names[:3]
+    file_summary = ", ".join(os.path.basename(f) for f in short_files)
+    if len(staged_names) > 3:
+        file_summary += f" +{len(staged_names)-3} more"
+
+    title = f"Changes in {file_summary}"
+    summary = f"Pre-commit auto-log for {len(staged_names)} staged file(s).\n\nDiff stat:\n{diff_stat}"
+    now = datetime.now(timezone.utc)
+
+    entry = {
+        "id": f"{now.strftime('%Y%m%dT%H%M%SZ')}-precommit",
+        "createdAt": now.isoformat(),
+        "type": "work",
+        "title": title,
+        "summary": summary,
+        "commit": "pending",
+        "fullCommit": "pending",
+        "branch": branch,
+        "dirty": False,
+        "files": staged_names,
+    }
+
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    print(f"[ctx] 📝 Auto-recorded work-log before commit: {title}")
+PYEOF
+    fi
+  fi
+
+  if [ -d "$CONTEXT_DIR/.git" ]; then
+    git -C "$CONTEXT_DIR" add -A
+    if ! git -C "$CONTEXT_DIR" diff-index --quiet HEAD -- 2>/dev/null; then
+      local timestamp
+      timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+      git -C "$CONTEXT_DIR" commit -m "Auto-sync local context ($timestamp)" --quiet
+      echo -e "[ctx] 🔒 Auto-committed local context (${rel_context_dir}) to local Git."
+    fi
+  fi
+
+  exit 0
+}
+
 # ── version ────────────────────────────────────────────
 cmd_version() {
   echo "ctx v${VERSION}"
@@ -874,7 +1373,7 @@ cmd_version() {
 
 # ── main ───────────────────────────────────────────────
 case "${1:-help}" in
-  init)    cmd_init ;;
+  init)    cmd_init "$@" ;;
   status)  cmd_status ;;
   sync)    cmd_sync ;;
   export)  cmd_export ;;
@@ -884,6 +1383,9 @@ case "${1:-help}" in
   generate) cmd_generate "$2" ;;
   log|record) cmd_log "${@:2}" ;;
   timeline) cmd_timeline "${@:2}" ;;
+  backfill) cmd_backfill "${@:2}" ;;
+  hook)     cmd_hook "${@:2}" ;;
+  _hook_run_pre_commit) _hook_run_pre_commit ;;
   version) cmd_version ;;
   help|--help|-h|*) cmd_help ;;
 esac

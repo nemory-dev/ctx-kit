@@ -70,12 +70,38 @@ Register agent rule file paths in `ctx.config.json`, run `ctx sync`, and all rul
 | `bash ctx.sh generate <type>` | Collect configured source files into a generated context bundle |
 | `bash ctx.sh log --summary "..."` | Record a commit/work-unit summary in `<context>/work-log/timeline.jsonl` |
 | `bash ctx.sh timeline --limit 20` | Show recent work-log entries |
+| `bash ctx.sh backfill [--limit N]` | Backfill past Git commits into timeline.jsonl |
+| `bash ctx.sh hook install` | Install Git pre-commit hook for auto-sync & auto-log |
+| `bash ctx.sh hook uninstall` | Remove Git pre-commit hook |
+| `bash ctx.sh hook status` | Show Git integration and context repository status |
 | `bash ctx.sh list` | List all agents and their enabled status |
 | `bash ctx.sh enable <n>` | Enable a specific agent |
 | `bash ctx.sh disable <n>` | Disable a specific agent |
 | `bash ctx.sh help` | Show full help |
 
+> **Windows Users**: You can use `ctx.cmd` directly (e.g. `ctx status`, `ctx log`, `ctx hook install`) from CMD or PowerShell!
+
 ---
+
+## Git Sync & Auto-Log (Private Local Versioning)
+
+Manage private AI context without polluting public team commits or leaking private notes to remote repositories:
+
+1. **Zero Remote Leakage**: The context directory (e.g. `.ctx-local/` or `sample-context/`) is automatically added to `.gitignore`. Running `git push` will never push your private context.
+2. **Independent Local Git Tracking**: `ctx hook install` initializes an independent Git repository inside your context directory and installs a `pre-commit` hook.
+3. **Auto-Log Before Commit**: When `auto_log` is enabled in `ctx.config.json`, staged changes and diff statistics are automatically summarized and recorded into `timeline.jsonl` right before each `git commit`.
+4. **Historical Backfill**: Adopting `ctx-kit` in an existing project? Run `bash ctx.sh backfill --limit 30` to reconstruct past commits into `timeline.jsonl`.
+
+```json
+// ctx.config.json
+{
+  "source": ".ctx-local/AGENT_RULES.md",
+  "git_sync": {
+    "enabled": true,
+    "auto_log": true
+  }
+}
+```
 
 ## File Structure
 

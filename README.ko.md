@@ -70,12 +70,38 @@ GEMINI.md ──┘
 | `bash ctx.sh generate <type>` | 설정된 소스 파일들을 묶어 컨텍스트 번들 생성 |
 | `bash ctx.sh log --summary "..."` | 커밋/작업단위 요약을 `<context>/work-log/timeline.jsonl`에 기록 |
 | `bash ctx.sh timeline --limit 20` | 최근 work-log 엔트리 표시 |
+| `bash ctx.sh backfill [--limit N]` | 과거 Git 커밋 내역을 timeline.jsonl로 복원 |
+| `bash ctx.sh hook install` | Git pre-commit 훅 설치 (로컬 자동 동기화 & auto-log) |
+| `bash ctx.sh hook uninstall` | Git pre-commit 훅 제거 |
+| `bash ctx.sh hook status` | Git 연동 및 컨텍스트 로컬 저장소 상태 확인 |
 | `bash ctx.sh list` | 등록된 에이전트와 활성 상태 목록 |
 | `bash ctx.sh enable <n>` | 특정 에이전트 활성화 |
 | `bash ctx.sh disable <n>` | 특정 에이전트 비활성화 |
 | `bash ctx.sh help` | 전체 도움말 표시 |
 
+> **Windows 사용자**: 명령 프롬프트(CMD) 또는 PowerShell에서 `ctx.cmd`를 직접 실행할 수 있습니다 (예: `ctx status`, `ctx log`, `ctx hook install`).
+
 ---
+
+## Git 연동 & 자동 요약 로그 (로컬 비공개 버전 관리)
+
+팀 공용 원격 저장소(GitHub 등)에 개인 메모나 AI 컨텍스트를 유출하지 않고 안전하게 로컬 버전 관리합니다:
+
+1. **원격 푸시 원천 차단**: 컨텍스트 폴더(예: `.ctx-local/` 또는 `sample-context/`)는 메인 프로젝트의 `.gitignore`에 자동 등록되어 `git push` 시 절대 업로드되지 않습니다.
+2. **독립 로컬 Git 추적**: `ctx hook install`을 실행하면 컨텍스트 폴더 내부에 별도의 로컬 Git 저장소가 생성되고, `pre-commit` 훅이 연동됩니다.
+3. **커밋 직전 자동 요약 (auto_log)**: `ctx.config.json`에서 `auto_log: true`로 설정하면, 메인 코드 커밋 직전에 변경 파일 및 diff 통계를 자동으로 요약하여 `timeline.jsonl`에 선행 기록한 뒤 로컬 Git에 커밋합니다.
+4. **기존 프로젝트 과거 이력 복원 (backfill)**: 이미 진행 중이던 프로젝트에 `ctx-kit`을 중간 도입한 경우, `bash ctx.sh backfill --limit 30`을 실행하여 이전 Git 커밋들을 `timeline.jsonl`로 한 번에 가져올 수 있습니다.
+
+```json
+// ctx.config.json
+{
+  "source": ".ctx-local/AGENT_RULES.md",
+  "git_sync": {
+    "enabled": true,
+    "auto_log": true
+  }
+}
+```
 
 ## 파일 구조
 

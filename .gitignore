@@ -1,0 +1,11 @@
+# Local private AI context (ctx-kit, never pushed)
+.ctx-local/
+sample-context/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
