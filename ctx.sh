@@ -19,6 +19,29 @@ py_path() {
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 
+# Fallback shim if python3 command is missing
+if ! command -v python3 >/dev/null 2>&1; then
+  if command -v python >/dev/null 2>&1; then
+    python3() { python "$@"; }
+  elif [ -x "/c/Users/ez/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe" ]; then
+    python3() (
+      export PYTHONUTF8=1
+      export PYTHONIOENCODING=utf-8
+      for name in CTX_ROOT CTX_LOG_FILE CTX_CONFIG; do
+        value="${!name:-}"
+        if [ -n "$value" ]; then
+          export "$name=$(cygpath -w "$value" 2>/dev/null || echo "$value")"
+        fi
+      done
+      converted=()
+      for arg in "$@"; do
+        converted+=("${arg//\/c\//C:\/}")
+      done
+      "/c/Users/ez/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe" "${converted[@]}"
+    )
+  fi
+fi
+
 VERSION="1.1.0"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
