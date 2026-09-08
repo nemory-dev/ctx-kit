@@ -71,6 +71,7 @@ GEMINI.md ──┘
 | `bash ctx.sh log --summary "..."` | 커밋/작업단위 요약을 `<context>/work-log/timeline.jsonl`에 기록 |
 | `bash ctx.sh timeline --limit 20` | 최근 work-log 엔트리 표시 |
 | `bash ctx.sh backfill [--limit N]` | 과거 Git 커밋 내역을 timeline.jsonl로 복원 |
+| `bash ctx.sh archive [--keep N]` | 완료된 태스크 및 오래된 로그를 아카이브로 분리/압축 |
 | `bash ctx.sh hook install` | Git pre-commit 훅 설치 (로컬 자동 동기화 & auto-log) |
 | `bash ctx.sh hook uninstall` | Git pre-commit 훅 제거 |
 | `bash ctx.sh hook status` | Git 연동 및 컨텍스트 로컬 저장소 상태 확인 |
@@ -79,7 +80,40 @@ GEMINI.md ──┘
 | `bash ctx.sh disable <n>` | 특정 에이전트 비활성화 |
 | `bash ctx.sh help` | 전체 도움말 표시 |
 
-> **Windows 사용자**: 명령 프롬프트(CMD) 또는 PowerShell에서 `ctx.cmd`를 직접 실행할 수 있습니다 (예: `ctx status`, `ctx log`, `ctx hook install`).
+> **Windows 사용자**: 명령 프롬프트(CMD) 또는 PowerShell에서 `ctx.cmd`를 직접 실행할 수 있습니다 (예: `ctx status`, `ctx log`, `ctx hook install`, `ctx archive`).
+
+---
+
+## 3단계 계층형 컨텍스트 & 아카이빙 (컨텍스트 비대화 방지)
+
+프로젝트가 장기화되면서 완료된 작업과 수백 개의 커밋 로그가 누적되면 **컨텍스트 윈도우 낭비, 토큰 비용 증가, AI 주의 분산(Lost in the middle)**이 발생합니다. `ctx-kit`은 **3단계 계층형 컨텍스트 아키텍처**를 제공합니다:
+
+```text
+your-project/
+└── .ctx-local/ (또는 sample-context/)
+    ├── AGENT_RULES.md         ← [Hot] 매 세션 필독 규칙 (단일 진실 공급원)
+    ├── MASTER_PLAN.md         ← [Hot] 현재 진행 중인 태스크 + 다음 액션만 유지
+    ├── decisions.md           ← [Hot] 현재 유효한 아키텍처 결정(ADR)
+    ├── backlog.md             ← [Hot] 아이디어 및 열린 질문
+    ├── work-log/
+    │   ├── timeline.jsonl     ← [Hot] 최근 20~30개 작업 단위 타임라인
+    │   └── timeline-digest.md ← [Warm] 과거 작업 로그의 압축 마일스톤 요약
+    └── archive/               ← [Cold] AI 기본 로딩에서 제외! (토큰 절약)
+        ├── completed-tasks.md ← MASTER_PLAN에서 완료된 [x] 태스크 모음
+        └── timeline-YYYY-MM.jsonl ← 월별 분할 보관된 과거 타임라인 원본
+```
+
+### 명령어 하나로 원클릭 아카이빙
+```bash
+bash ctx.sh archive            # 최근 30개 로그 유지, 완료 태스크 아카이브
+bash ctx.sh archive --keep 20  # 최근 20개 로그 유지
+```
+
+- **태스크 분리**: `MASTER_PLAN.md`에서 완료된 `- [x]` 항목들을 날짜 헤더와 함께 `archive/completed-tasks.md`로 이동시켜 현재 계획 문서를 슬림하게 유지합니다.
+- **타임라인 분할**: `timeline.jsonl`의 오래된 로그들을 월별로 `archive/timeline-YYYY-MM.jsonl`에 분할 보관합니다.
+- **마일스톤 다이제스트**: 과거 이력들의 핵심 제목을 모아 `work-log/timeline-digest.md` 압축 요약본을 자동 생성하여 AI가 과거 맥락을 단숨에 파악할 수 있게 합니다.
+- **토큰 최적화 내보내기**: `ctx export` 실행 시 `archive/` 폴더는 자동으로 제외하여 토큰을 70~80% 절약합니다 (`ctx export --all` 시 전체 포함).
+- **로컬 Git 자동 커밋**: 아카이빙된 파일들도 로컬 전용 컨텍스트 Git에 자동으로 안전하게 커밋됩니다.
 
 ---
 

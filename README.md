@@ -71,6 +71,7 @@ Register agent rule file paths in `ctx.config.json`, run `ctx sync`, and all rul
 | `bash ctx.sh log --summary "..."` | Record a commit/work-unit summary in `<context>/work-log/timeline.jsonl` |
 | `bash ctx.sh timeline --limit 20` | Show recent work-log entries |
 | `bash ctx.sh backfill [--limit N]` | Backfill past Git commits into timeline.jsonl |
+| `bash ctx.sh archive [--keep N]` | Archive completed tasks & split old logs into cold storage |
 | `bash ctx.sh hook install` | Install Git pre-commit hook for auto-sync & auto-log |
 | `bash ctx.sh hook uninstall` | Remove Git pre-commit hook |
 | `bash ctx.sh hook status` | Show Git integration and context repository status |
@@ -79,7 +80,40 @@ Register agent rule file paths in `ctx.config.json`, run `ctx sync`, and all rul
 | `bash ctx.sh disable <n>` | Disable a specific agent |
 | `bash ctx.sh help` | Show full help |
 
-> **Windows Users**: You can use `ctx.cmd` directly (e.g. `ctx status`, `ctx log`, `ctx hook install`) from CMD or PowerShell!
+> **Windows Users**: You can use `ctx.cmd` directly (e.g. `ctx status`, `ctx log`, `ctx hook install`, `ctx archive`) from CMD or PowerShell!
+
+---
+
+## 3-Tier Hierarchical Context & Archiving (Prevent Context Bloat)
+
+As projects grow, completed tasks and hundreds of commit logs accumulate, causing **context window bloat, token waste, and AI distraction**. `ctx-kit` provides a **3-tier hierarchical context structure**:
+
+```text
+your-project/
+└── .ctx-local/ (or sample-context/)
+    ├── AGENT_RULES.md         ← [Hot] Loaded every session (Rules)
+    ├── MASTER_PLAN.md         ← [Hot] Active tasks & next actions only
+    ├── decisions.md           ← [Hot] Current active architecture decisions
+    ├── backlog.md             ← [Hot] Ideas and open questions
+    ├── work-log/
+    │   ├── timeline.jsonl     ← [Hot] Recent 20~30 work unit logs
+    │   └── timeline-digest.md ← [Warm] Compressed milestone summary of past work
+    └── archive/               ← [Cold] Excluded from AI context loading!
+        ├── completed-tasks.md ← Completed [x] tasks moved from MASTER_PLAN
+        └── timeline-YYYY-MM.jsonl ← Monthly partitioned historical logs
+```
+
+### Run Archiving with One Command
+```bash
+bash ctx.sh archive            # Keep top 30 logs, move completed tasks to archive
+bash ctx.sh archive --keep 20  # Keep top 20 logs
+```
+
+- **Tasks**: Completed `- [x]` items in `MASTER_PLAN.md` are moved to `archive/completed-tasks.md` under date headers, keeping your active plan slim and focused.
+- **Logs**: Older entries in `timeline.jsonl` are split by month into `archive/timeline-YYYY-MM.jsonl`.
+- **Digest**: A compressed milestone summary is generated in `work-log/timeline-digest.md` so agents can understand past history without token waste.
+- **Token-Optimized Export**: `ctx export` automatically excludes the `archive/` folder to save 70~80% tokens (use `ctx export --all` to include cold archives).
+- **Auto Git Commit**: All archives are automatically committed to the local private context Git repository.
 
 ---
 

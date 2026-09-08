@@ -128,6 +128,7 @@ cmd_help() {
   printf "  %-20s %s\n" "log"            "Record a commit/work-unit summary into context work-log"
   printf "  %-20s %s\n" "timeline"       "Show recorded work-log entries by commit/work unit"
   printf "  %-20s %s\n" "backfill"       "Backfill past Git commits into context work-log"
+  printf "  %-20s %s\n" "archive"        "Archive completed tasks & split old timeline logs"
   printf "  %-20s %s\n" "hook [cmd]"     "Manage Git pre-commit hook (install|uninstall|status)"
   printf "  %-20s %s\n" "version"        "Show version"
   printf "  %-20s %s\n" "help"           "Show this help"
@@ -135,12 +136,14 @@ cmd_help() {
   echo -e "${BOLD}Config:${NC}"
   echo "  ctx.config.json              — Agent rule file paths & git_sync options"
   echo ""
-  echo -e "${BOLD}Context files:${NC}"
-  echo "  <context>/AGENT_RULES.md  — Agent behavior rules (single source of truth)"
-  echo "  <context>/MASTER_PLAN.md  — Current status + next actions"
-  echo "  <context>/decisions.md    — Architecture decision records (ADR)"
-  echo "  <context>/backlog.md      — Ideas + future tasks"
-  echo "  <context>/work-log/       — Commit/work-unit timeline entries"
+  echo -e "${BOLD}Context files (3-Tier Hierarchical Context):${NC}"
+  echo "  <context>/AGENT_RULES.md     — [Hot] Agent behavior rules (single source of truth)"
+  echo "  <context>/MASTER_PLAN.md     — [Hot] Current state + next actions"
+  echo "  <context>/decisions.md       — [Hot] Architecture decision records (ADR)"
+  echo "  <context>/backlog.md         — [Hot] Ideas + future tasks"
+  echo "  <context>/work-log/          — [Hot] Recent commit/work-unit timeline entries"
+  echo "  <context>/work-log/timeline-digest.md — [Warm] Compressed milestone summary"
+  echo "  <context>/archive/           — [Cold] Archived completed tasks and past logs"
   echo ""
   echo -e "${BOLD}Quick start:${NC}"
   echo "  bash ctx.sh init            # First time setup"
@@ -151,6 +154,7 @@ cmd_help() {
   echo "  bash ctx.sh log --summary \"Implemented feedback MVP\""
   echo "  bash ctx.sh timeline --limit 10"
   echo "  bash ctx.sh backfill --limit 30 # Backfill past commits"
+  echo "  bash ctx.sh archive         # Compact context & archive completed tasks"
   echo "  bash ctx.sh hook install    # Install Git pre-commit auto-sync hook"
   echo ""
 }
@@ -593,6 +597,15 @@ cmd_sync() {
 cmd_export() {
   require_config
   resolve_context_dir
+
+  local ALL_MODE="false"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all) ALL_MODE="true"; shift ;;
+      *) shift ;;
+    esac
+  done
+
   echo -e "${BOLD}[ctx export] Context for web-based LLMs${NC}"
   echo -e "${CYAN}Copy the output below and paste it into Claude.ai, ChatGPT, etc.${NC}"
   echo ""
@@ -628,6 +641,41 @@ cmd_export() {
     echo "## [BACKLOG]"
     cat "$CONTEXT_DIR/backlog.md"
     echo ""
+  fi
+
+  # Warm Digest (Milestones)
+  if [ -f "$CONTEXT_DIR/work-log/timeline-digest.md" ]; then
+    echo "$SEPARATOR"
+    echo ""
+    echo "## [PAST MILESTONES (WARM DIGEST)]"
+    cat "$CONTEXT_DIR/work-log/timeline-digest.md"
+    echo ""
+  fi
+
+  # Recent Work-log (Hot Context)
+  if [ -f "$CONTEXT_DIR/work-log/timeline.jsonl" ]; then
+    echo "$SEPARATOR"
+    echo ""
+    echo "## [RECENT WORK UNITS (HOT)]"
+    cmd_timeline --limit 10 2>/dev/null || true
+  fi
+
+  # Cold Archives (only if --all)
+  if [ "$ALL_MODE" = "true" ] && [ -d "$CONTEXT_DIR/archive" ]; then
+    echo "$SEPARATOR"
+    echo ""
+    echo "## [COLD ARCHIVES]"
+    if [ -f "$CONTEXT_DIR/archive/completed-tasks.md" ]; then
+      echo "### [Archived Tasks]"
+      cat "$CONTEXT_DIR/archive/completed-tasks.md"
+      echo ""
+    fi
+  else
+    if [ -d "$CONTEXT_DIR/archive" ]; then
+      echo "$SEPARATOR"
+      echo "> 📦 Cold archives omitted to save tokens. Use 'ctx export --all' to include full archives."
+      echo ""
+    fi
   fi
 
   echo "$SEPARATOR"
@@ -1117,6 +1165,208 @@ print(f"[ctx backfill] ✓ Backfilled {len(new_entries)} commit(s) into timeline
 PYEOF
 }
 
+# ── archive ────────────────────────────────────────────
+cmd_archive() {
+  require_config
+  resolve_context_dir
+  require_python
+
+  local KEEP="30" DO_TASKS="true" DO_LOGS="true"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --keep|-k) KEEP="$2"; shift 2 ;;
+      --no-tasks) DO_TASKS="false"; shift ;;
+      --no-logs)  DO_LOGS="false"; shift ;;
+      --help|-h)
+        echo "Usage: bash ctx.sh archive [--keep 30] [--no-tasks] [--no-logs]"
+        echo ""
+        echo "Options:"
+        echo "  --keep, -k <N>  Number of recent timeline entries to keep in timeline.jsonl (default: 30)"
+        echo "  --no-tasks      Do not archive completed tasks from MASTER_PLAN.md"
+        echo "  --no-logs       Do not archive timeline.jsonl logs"
+        return 0
+        ;;
+      *) echo "Unknown option: $1"; return 1 ;;
+    esac
+  done
+
+  echo -e "${BOLD}[ctx archive] Archiving completed tasks and old logs${NC}"
+  echo ""
+
+  local ARCHIVE_DIR="$CONTEXT_DIR/archive"
+  mkdir -p "$ARCHIVE_DIR"
+
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_DIR="$(py_path "$CONTEXT_DIR")" CTX_KEEP="$KEEP" CTX_TASKS="$DO_TASKS" CTX_LOGS="$DO_LOGS" python3 << 'PYEOF'
+import json
+import os
+import re
+from datetime import datetime
+
+context_dir = os.environ["CTX_DIR"]
+archive_dir = os.path.join(context_dir, "archive")
+os.makedirs(archive_dir, exist_ok=True)
+keep_count = int(os.environ["CTX_KEEP"])
+do_tasks = os.environ["CTX_TASKS"] == "true"
+do_logs = os.environ["CTX_LOGS"] == "true"
+
+today_str = datetime.now().strftime("%Y-%m-%d")
+
+# 1. Archive Completed Tasks from MASTER_PLAN.md
+if do_tasks:
+    master_plan_path = os.path.join(context_dir, "MASTER_PLAN.md")
+    if os.path.exists(master_plan_path):
+        with open(master_plan_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        new_lines = []
+        completed_tasks = []
+        task_regex = re.compile(r"^\s*[-*]\s*\[[xX]\]\s*(.*)$")
+
+        for line in lines:
+            m = task_regex.match(line)
+            if m:
+                completed_tasks.append(line.rstrip())
+            else:
+                new_lines.append(line)
+
+        if completed_tasks:
+            full_text = "".join(new_lines)
+            if "archive/completed-tasks.md" not in full_text:
+                header_m = re.search(r"(#\s+.*?\n)", full_text)
+                notice = f"\n> 📦 Archived completed tasks: `archive/completed-tasks.md`\n"
+                if header_m:
+                    idx = header_m.end()
+                    full_text = full_text[:idx] + notice + full_text[idx:]
+                else:
+                    full_text = notice + full_text
+                new_lines = [full_text]
+
+            with open(master_plan_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+
+            archive_task_path = os.path.join(archive_dir, "completed-tasks.md")
+            exists = os.path.exists(archive_task_path)
+            with open(archive_task_path, "a", encoding="utf-8") as f:
+                if not exists:
+                    f.write("# Completed Tasks Archive\n\n> Historical record of completed tasks moved from MASTER_PLAN.md\n\n")
+                f.write(f"\n### Archived on {today_str}\n\n")
+                for task in completed_tasks:
+                    f.write(task + "\n")
+
+            print(f"  ✓ Archived {len(completed_tasks)} completed task(s) → archive/completed-tasks.md")
+        else:
+            print(f"  ~ No completed tasks to archive in MASTER_PLAN.md")
+
+# 2. Archive timeline logs & split by month
+archived_log_count = 0
+if do_logs:
+    timeline_path = os.path.join(context_dir, "work-log", "timeline.jsonl")
+    if os.path.exists(timeline_path):
+        entries = []
+        with open(timeline_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception:
+                        pass
+
+        if len(entries) > keep_count:
+            cutoff = len(entries) - keep_count
+            to_archive = entries[:cutoff]
+            to_keep = entries[cutoff:]
+
+            monthly_groups = {}
+            for item in to_archive:
+                created = item.get("createdAt", "")
+                month = created[:7] if len(created) >= 7 and created[:4].isdigit() else "legacy"
+                monthly_groups.setdefault(month, []).append(item)
+
+            for month, group in monthly_groups.items():
+                month_file = os.path.join(archive_dir, f"timeline-{month}.jsonl")
+                existing_ids = set()
+                if os.path.exists(month_file):
+                    with open(month_file, "r", encoding="utf-8") as f:
+                        for l in f:
+                            l = l.strip()
+                            if l:
+                                try:
+                                    e = json.loads(l)
+                                    if e.get("id"):
+                                        existing_ids.add(e["id"])
+                                except Exception:
+                                    pass
+
+                with open(month_file, "a", encoding="utf-8") as f:
+                    for e in group:
+                        if e.get("id") not in existing_ids:
+                            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+                            archived_log_count += 1
+
+            with open(timeline_path, "w", encoding="utf-8") as f:
+                for e in to_keep:
+                    f.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+            print(f"  ✓ Archived {archived_log_count} log entries → archive/timeline-YYYY-MM.jsonl (kept {len(to_keep)} active)")
+        else:
+            print(f"  ~ Timeline entries ({len(entries)}) <= keep threshold ({keep_count}), no logs to archive")
+
+# 3. Generate Warm Digest: work-log/timeline-digest.md
+archive_files = sorted([
+    f for f in os.listdir(archive_dir)
+    if f.startswith("timeline-") and f.endswith(".jsonl")
+])
+
+if archive_files:
+    digest_path = os.path.join(context_dir, "work-log", "timeline-digest.md")
+    with open(digest_path, "w", encoding="utf-8") as f:
+        f.write("# Timeline Digest & Milestones\n\n")
+        f.write("> Compressed summary of archived past work units and milestones.\n")
+        f.write(f"> Last Generated: {today_str}\n\n")
+
+        for fname in archive_files:
+            month_label = fname.replace("timeline-", "").replace(".jsonl", "")
+            fpath = os.path.join(archive_dir, fname)
+            month_entries = []
+            with open(fpath, "r", encoding="utf-8") as mf:
+                for line in mf:
+                    line = line.strip()
+                    if line:
+                        try:
+                            month_entries.append(json.loads(line))
+                        except Exception:
+                            pass
+
+            if month_entries:
+                f.write(f"## Milestone {month_label} ({len(month_entries)} units)\n\n")
+                for e in month_entries:
+                    date_prefix = e.get("createdAt", "")[:10]
+                    title = e.get("title", "")
+                    commit = e.get("commit", "")
+                    commit_tag = f" `[{commit}]`" if commit and commit != "uncommitted" and commit != "pending" else ""
+                    f.write(f"- **{date_prefix}**: {title}{commit_tag}\n")
+                f.write("\n")
+
+    print(f"  ✓ Generated warm milestone digest → work-log/timeline-digest.md")
+PYEOF
+
+  # 4. Auto-commit archives to local context Git if initialized
+  if [ -d "$CONTEXT_DIR/.git" ]; then
+    ctx_git add -A
+    if ! ctx_git diff-index --quiet HEAD -- 2>/dev/null; then
+      local timestamp
+      timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+      ctx_git commit -m "chore(context): archive completed tasks and past logs ($timestamp)" --quiet
+      echo -e "  ${GREEN}✓${NC} Auto-committed archives to local context Git."
+    fi
+  fi
+
+  echo ""
+  echo -e "${GREEN}🎉 Archiving complete!${NC}"
+  echo "  Active context is now compact and optimized for AI sessions."
+}
+
 # ── hook ───────────────────────────────────────────────
 cmd_hook() {
   case "${1:-status}" in
@@ -1398,7 +1648,7 @@ case "${1:-help}" in
   init)    cmd_init "$@" ;;
   status)  cmd_status ;;
   sync)    cmd_sync ;;
-  export)  cmd_export ;;
+  export)  cmd_export "${@:2}" ;;
   list)    cmd_list ;;
   enable)  cmd_enable "$2" ;;
   disable) cmd_disable "$2" ;;
@@ -1406,6 +1656,7 @@ case "${1:-help}" in
   log|record) cmd_log "${@:2}" ;;
   timeline) cmd_timeline "${@:2}" ;;
   backfill) cmd_backfill "${@:2}" ;;
+  archive)  cmd_archive "${@:2}" ;;
   hook)     cmd_hook "${@:2}" ;;
   _hook_run_pre_commit) _hook_run_pre_commit ;;
   version) cmd_version ;;

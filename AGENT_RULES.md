@@ -10,10 +10,13 @@
 Before starting any task, read in this order:
 
 ```
-1. sample-context/MASTER_PLAN.md   → Current state + next actions
-2. sample-context/decisions.md     → Existing technical decisions
-3. sample-context/backlog.md       → Pending ideas
+1. sample-context/MASTER_PLAN.md               → Current state + next actions [Hot]
+2. sample-context/decisions.md                 → Existing technical decisions [Hot]
+3. sample-context/work-log/timeline-digest.md     → Past milestones summary (if present) [Warm]
+4. sample-context/backlog.md                   → Pending ideas [Hot]
 ```
+
+> 💡 **3-Tier Context Notice**: Detailed past logs and completed tasks are archived in `sample-context/archive/` [Cold] and excluded from session loading to optimize tokens and prevent context bloat.
 
 Then output exactly:
 
