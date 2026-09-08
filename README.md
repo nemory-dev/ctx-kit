@@ -71,7 +71,7 @@ Register agent rule file paths in `ctx.config.json`, run `ctx sync`, and all rul
 | `bash ctx.sh log --summary "..."` | Record a commit/work-unit summary in `<context>/work-log/timeline.jsonl` |
 | `bash ctx.sh timeline --limit 20` | Show recent work-log entries |
 | `bash ctx.sh backfill [--limit N]` | Backfill past Git commits into timeline.jsonl |
-| `bash ctx.sh archive [--keep N]` | Archive completed tasks & split old logs into cold storage |
+| `bash ctx.sh archive [--keep N]` | Archive completed tasks, split old logs & archive deprecated ADRs |
 | `bash ctx.sh hook install` | Install Git pre-commit hook for auto-sync & auto-log |
 | `bash ctx.sh hook uninstall` | Remove Git pre-commit hook |
 | `bash ctx.sh hook status` | Show Git integration and context repository status |
@@ -100,16 +100,19 @@ your-project/
     │   └── timeline-digest.md ← [Warm] Compressed milestone summary of past work
     └── archive/               ← [Cold] Excluded from AI context loading!
         ├── completed-tasks.md ← Completed [x] tasks moved from MASTER_PLAN
+        ├── decisions-deprecated.md ← Deprecated/superseded ADRs from decisions.md
         └── timeline-YYYY-MM.jsonl ← Monthly partitioned historical logs
 ```
 
 ### Run Archiving with One Command
 ```bash
-bash ctx.sh archive            # Keep top 30 logs, move completed tasks to archive
+bash ctx.sh archive            # Keep top 30 logs, move completed tasks & deprecated ADRs to archive
 bash ctx.sh archive --keep 20  # Keep top 20 logs
+bash ctx.sh archive --no-decisions # Archive tasks and logs only
 ```
 
 - **Tasks**: Completed `- [x]` items in `MASTER_PLAN.md` are moved to `archive/completed-tasks.md` under date headers, keeping your active plan slim and focused.
+- **Decisions**: Deprecated or superseded ADRs (`Status: Deprecated / Superseded` / `상태: 폐기됨 / 대체됨`) in `decisions.md` are moved to `archive/decisions-deprecated.md`.
 - **Logs**: Older entries in `timeline.jsonl` are split by month into `archive/timeline-YYYY-MM.jsonl`.
 - **Digest**: A compressed milestone summary is generated in `work-log/timeline-digest.md` so agents can understand past history without token waste.
 - **Token-Optimized Export**: `ctx export` automatically excludes the `archive/` folder to save 70~80% tokens (use `ctx export --all` to include cold archives).

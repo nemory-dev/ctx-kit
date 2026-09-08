@@ -107,7 +107,7 @@ get_agents() {
   require_python
   python3 -c "import json
 with open('$(py_path "$CONFIG")') as f: d=json.load(f)
-for a in d['agent_rules']: print(f\"{a['name']}|{a['path']}|{a['enabled']}\")"
+for a in d['agent_rules']: print(f\"{a['name']}|{a['path']}|{a['enabled']}\")" | tr -d '\r'
 }
 
 # ── help ───────────────────────────────────────────────
@@ -128,7 +128,7 @@ cmd_help() {
   printf "  %-20s %s\n" "log"            "Record a commit/work-unit summary into context work-log"
   printf "  %-20s %s\n" "timeline"       "Show recorded work-log entries by commit/work unit"
   printf "  %-20s %s\n" "backfill"       "Backfill past Git commits into context work-log"
-  printf "  %-20s %s\n" "archive"        "Archive completed tasks & split old timeline logs"
+  printf "  %-20s %s\n" "archive"        "Archive completed tasks, deprecated ADRs & split logs"
   printf "  %-20s %s\n" "hook [cmd]"     "Manage Git pre-commit hook (install|uninstall|status)"
   printf "  %-20s %s\n" "version"        "Show version"
   printf "  %-20s %s\n" "help"           "Show this help"
@@ -670,6 +670,11 @@ cmd_export() {
       cat "$CONTEXT_DIR/archive/completed-tasks.md"
       echo ""
     fi
+    if [ -f "$CONTEXT_DIR/archive/decisions-deprecated.md" ]; then
+      echo "### [Archived Deprecated Decisions]"
+      cat "$CONTEXT_DIR/archive/decisions-deprecated.md"
+      echo ""
+    fi
   else
     if [ -d "$CONTEXT_DIR/archive" ]; then
       echo "$SEPARATOR"
@@ -1171,32 +1176,34 @@ cmd_archive() {
   resolve_context_dir
   require_python
 
-  local KEEP="30" DO_TASKS="true" DO_LOGS="true"
+  local KEEP="30" DO_TASKS="true" DO_LOGS="true" DO_DECISIONS="true"
   while [ $# -gt 0 ]; do
     case "$1" in
       --keep|-k) KEEP="$2"; shift 2 ;;
-      --no-tasks) DO_TASKS="false"; shift ;;
-      --no-logs)  DO_LOGS="false"; shift ;;
+      --no-tasks)     DO_TASKS="false"; shift ;;
+      --no-logs)      DO_LOGS="false"; shift ;;
+      --no-decisions) DO_DECISIONS="false"; shift ;;
       --help|-h)
-        echo "Usage: bash ctx.sh archive [--keep 30] [--no-tasks] [--no-logs]"
+        echo "Usage: bash ctx.sh archive [--keep 30] [--no-tasks] [--no-logs] [--no-decisions]"
         echo ""
         echo "Options:"
         echo "  --keep, -k <N>  Number of recent timeline entries to keep in timeline.jsonl (default: 30)"
         echo "  --no-tasks      Do not archive completed tasks from MASTER_PLAN.md"
         echo "  --no-logs       Do not archive timeline.jsonl logs"
+        echo "  --no-decisions  Do not archive deprecated/superseded ADRs from decisions.md"
         return 0
         ;;
       *) echo "Unknown option: $1"; return 1 ;;
     esac
   done
 
-  echo -e "${BOLD}[ctx archive] Archiving completed tasks and old logs${NC}"
+  echo -e "${BOLD}[ctx archive] Archiving completed tasks, old logs, and deprecated decisions${NC}"
   echo ""
 
   local ARCHIVE_DIR="$CONTEXT_DIR/archive"
   mkdir -p "$ARCHIVE_DIR"
 
-  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_DIR="$(py_path "$CONTEXT_DIR")" CTX_KEEP="$KEEP" CTX_TASKS="$DO_TASKS" CTX_LOGS="$DO_LOGS" python3 << 'PYEOF'
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_DIR="$(py_path "$CONTEXT_DIR")" CTX_KEEP="$KEEP" CTX_TASKS="$DO_TASKS" CTX_LOGS="$DO_LOGS" CTX_DECISIONS="$DO_DECISIONS" python3 << 'PYEOF'
 import json
 import os
 import re
@@ -1208,6 +1215,7 @@ os.makedirs(archive_dir, exist_ok=True)
 keep_count = int(os.environ["CTX_KEEP"])
 do_tasks = os.environ["CTX_TASKS"] == "true"
 do_logs = os.environ["CTX_LOGS"] == "true"
+do_decisions = os.environ.get("CTX_DECISIONS", "true") == "true"
 
 today_str = datetime.now().strftime("%Y-%m-%d")
 
@@ -1257,7 +1265,62 @@ if do_tasks:
         else:
             print(f"  ~ No completed tasks to archive in MASTER_PLAN.md")
 
-# 2. Archive timeline logs & split by month
+# 2. Archive Deprecated / Superseded Decisions from decisions.md
+if do_decisions:
+    decisions_path = os.path.join(context_dir, "decisions.md")
+    if os.path.exists(decisions_path):
+        with open(decisions_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        adr_pattern = re.compile(r"(?=(?:^#{2,4}\s+(?:\[?ADR[-_#\d]|\[ADR|ADR\s*:\s*|ADR\s+\d+)))", re.MULTILINE)
+        sections = adr_pattern.split(content)
+        header = sections[0]
+        adrs = sections[1:]
+
+        active_adrs = []
+        deprecated_adrs = []
+        dep_regex = re.compile(
+            r"(?:\*{0,2}(?:상태|Status)\*{0,2}\s*:\s*\*{0,2}(?:대체됨|폐기됨|Superseded|Deprecated|Obsolete|Cancelled)|\[\s*(?:Status|상태)\s*:\s*(?:대체됨|폐기됨|Superseded|Deprecated|Obsolete|Cancelled)[^\]]*\])",
+            re.IGNORECASE
+        )
+
+        for adr in adrs:
+            if dep_regex.search(adr):
+                deprecated_adrs.append(adr.strip())
+            else:
+                active_adrs.append(adr.strip())
+
+        if deprecated_adrs:
+            archive_dec_path = os.path.join(archive_dir, "decisions-deprecated.md")
+            exists = os.path.exists(archive_dec_path)
+            with open(archive_dec_path, "a", encoding="utf-8") as f:
+                if not exists:
+                    f.write("# Deprecated Architecture Decisions Archive\n\n> Historical record of deprecated or superseded ADRs moved from decisions.md\n\n---\n\n")
+                f.write(f"\n### Archived on {today_str}\n\n")
+                for d in deprecated_adrs:
+                    f.write(d + "\n\n---\n\n")
+
+            if "archive/decisions-deprecated.md" not in header:
+                header_m = re.search(r"(#\s+.*?\n)", header)
+                notice = f"\n> 📦 Archived Deprecated ADRs: `archive/decisions-deprecated.md`\n"
+                if header_m:
+                    idx = header_m.end()
+                    header = header[:idx] + notice + header[idx:]
+                else:
+                    header = notice + header
+
+            new_decisions_content = header.rstrip() + "\n\n"
+            for a in active_adrs:
+                new_decisions_content += a + "\n\n"
+
+            with open(decisions_path, "w", encoding="utf-8") as f:
+                f.write(new_decisions_content)
+
+            print(f"  ✓ Archived {len(deprecated_adrs)} deprecated ADR(s) → archive/decisions-deprecated.md")
+        else:
+            print(f"  ~ No deprecated ADRs to archive in decisions.md")
+
+# 3. Archive timeline logs & split by month
 archived_log_count = 0
 if do_logs:
     timeline_path = os.path.join(context_dir, "work-log", "timeline.jsonl")
@@ -1357,7 +1420,7 @@ PYEOF
     if ! ctx_git diff-index --quiet HEAD -- 2>/dev/null; then
       local timestamp
       timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-      ctx_git commit -m "chore(context): archive completed tasks and past logs ($timestamp)" --quiet
+      ctx_git commit -m "chore(context): archive completed tasks, past logs, and decisions ($timestamp)" --quiet
       echo -e "  ${GREEN}✓${NC} Auto-committed archives to local context Git."
     fi
   fi
