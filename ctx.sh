@@ -1138,15 +1138,13 @@ _hook_install() {
   local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
   echo -e "${BOLD}[ctx hook install] Configuring Git integration for '${rel_context_dir}'${NC}"
 
-  # 1) Add to .gitignore
-  local gitignore="$PROJECT_ROOT/.gitignore"
-  local escaped_rel
-  escaped_rel="$(printf '%s' "$rel_context_dir" | sed 's/[][\/.^$*]/\\&/g')"
-  if [ ! -f "$gitignore" ] || ! grep -q -E "^\s*${escaped_rel}/?\s*$" "$gitignore" 2>/dev/null; then
+  # 1) Check if already ignored (in .gitignore or .git/info/exclude)
+  if git -C "$PROJECT_ROOT" check-ignore -q "$rel_context_dir/" 2>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} ${rel_context_dir}/ is already ignored by Git (.gitignore or .git/info/exclude)"
+  else
+    local gitignore="$PROJECT_ROOT/.gitignore"
     printf "\n# Local private AI context (ctx-kit, never pushed)\n${rel_context_dir}/\n" >> "$gitignore"
     echo -e "  ${GREEN}✓${NC} Added ${rel_context_dir}/ to .gitignore"
-  else
-    echo -e "  ${YELLOW}~${NC} ${rel_context_dir}/ already ignored in .gitignore"
   fi
 
   # 2) Initialize independent Git in context directory
@@ -1278,13 +1276,10 @@ print(f\"{gs.get('enabled', False)}|{gs.get('auto_log', False)}\")")
     echo -e "  pre-commit hook: ${RED}Not installed${NC}"
   fi
 
-  local gitignore="$PROJECT_ROOT/.gitignore"
-  local escaped_rel
-  escaped_rel="$(printf '%s' "$rel_context_dir" | sed 's/[][\/.^$*]/\\&/g')"
-  if [ -f "$gitignore" ] && grep -q -E "^\s*${escaped_rel}/?\s*$" "$gitignore" 2>/dev/null; then
-    echo -e "  .gitignore:      ${GREEN}Ignored${NC} (${rel_context_dir}/ is safe from remote push)"
+  if git -C "$PROJECT_ROOT" check-ignore -q "$rel_context_dir/" 2>/dev/null; then
+    echo -e "  Git exclusion:   ${GREEN}Ignored${NC} (${rel_context_dir}/ is safe from remote push)"
   else
-    echo -e "  .gitignore:      ${RED}Not ignored!${NC} (Warning: context may be tracked by main repo)"
+    echo -e "  Git exclusion:   ${RED}Not ignored!${NC} (Warning: context may be tracked by main repo)"
   fi
 
   if [ -d "$CONTEXT_DIR/.git" ]; then
