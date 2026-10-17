@@ -230,12 +230,41 @@ To collect more project-specific files, extend `generate.project.collect`:
 
 `sample-context/AGENT_RULES.md` defines how agents behave. The default template includes:
 
-- **Session start protocol** — forces agents to read context files before starting work
-- **Auto-detect + record protocol** — prompts to record decisions, status changes, and backlog items as they arise
-- **Session end protocol** — agents output a summary of what changed
+- **Session start protocol** — guides agents to read current state, decisions, the optional milestone digest, and backlog
+- **Auto-detect + record protocol** — asks before new decisions or scope/priority changes; records factual progress within an authorized task directly
+- **Session end protocol** — verifies changes, updates affected context, records through `ctx log`, and checks readback before reporting closure
 - **Absolute rules** — project-specific constraints
 
 Edit the `## 5. Project Context` section to match your project name, tech stack, and current phase.
+
+### Closing a work unit
+
+For work that changes project files (including documentation), the agent follows this sequence:
+
+1. Inspect the actual changes and run relevant checks. Report implementation, validation, commit, and merge status separately.
+2. Update `MASTER_PLAN.md` only when current state or next actions changed. Decisions and backlog updates still require applicable authorization; unchanged files stay untouched.
+3. Run `ctx log`, check its exit status, and read back the matching entry through `ctx timeline`. Include validation results and remaining issues in the summary; supply the relevant files explicitly.
+
+```bash
+bash ctx.sh log --summary "Updated documentation; checks passed; no open issues" --files "README.md" --type docs
+bash ctx.sh timeline --limit 1 --json
+```
+
+If another writer added a newer entry, increase the read limit and find your own summary and files. If recording or verification fails, report the cause and mark logging as failed or unverified. Check for an existing entry before retrying, and use only an allowed recovery/approval path. Do not bypass the CLI by editing `timeline.jsonl` directly.
+
+Read-only analysis/review needs no context edits or work-log entry. Explicit allowed-file or no-logging restrictions take precedence; report skipped steps. An agent without filesystem/CLI access provides proposed updates and commands, marked as unapplied. These are agent instructions, not automatic enforcement by the CLI; the Git hook does not replace this closure procedure.
+
+### Template paths and existing installations
+
+`init` renders document references using the context directory from `ctx.config.json` and CLI examples using the installed script location. For example, `source: "docs/context/AGENT_RULES.md"` and `scripts/ctx.sh` produce references to `docs/context/MASTER_PLAN.md` and commands starting with `bash scripts/ctx.sh`. Document paths are relative to the project root; run commands there.
+
+Existing rule files are skipped by `init`, and `sync` rebuilds links rather than upgrading their content (it also refreshes the plan's `Last Updated` date). To adopt these rules in an existing project:
+
+1. Back up the file identified by `source` in `ctx.config.json`.
+2. Compare it with this repository's `AGENT_RULES.md`. Merge the session-start, authorization, closure, and CLI guidance while preserving project-specific instructions and Project Context.
+3. Adapt document paths and CLI examples to your installation, then run `bash ctx.sh status` (or `bash scripts/ctx.sh status`). Check the source and enabled links, and verify the closure flow on your next authorized write task.
+
+Do not delete your context directory or replace customized rules wholesale to upgrade.
 
 ---
 
@@ -327,6 +356,22 @@ Or add an alias:
 # Add to ~/.zshrc or ~/.bashrc
 alias ctx-setup='cp ~/ctx-kit/ctx.sh . && cp ~/ctx-kit/ctx.config.json . && bash ctx.sh init'
 ```
+
+---
+
+## Development checks
+
+No additional test dependencies are required:
+
+```bash
+bash -n ctx.sh
+python3 -B -m unittest discover -s tests -v
+git diff --check
+```
+
+Tests run in temporary projects and cover standalone/default initialization, custom context paths, `scripts/` commands, preservation of customized context, and successful/failed log recording. They do not run an AI model or verify that an agent obeys the instructions.
+
+Keep the root `AGENT_RULES.md` and the embedded rules in `ctx.sh`'s `cmd_init` in sync. The embedded copy preserves installation by copying only `ctx.sh` and configuration; the tests compare generated rules with the root template to catch drift.
 
 ---
 

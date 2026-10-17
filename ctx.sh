@@ -221,18 +221,24 @@ CONFIGEOF
 
   _init_file "AGENT_RULES.md" << 'EOF'
 # Agent Rules — [Project Name]
-> Single Source of Truth. All agent rule files are symlinks to this file.
+> **Single Source of Truth.**
+> All agent rule files (CLAUDE.md, AGENTS.md, etc.) are symlinks to this file.
 > Edit only this file. Run `bash ctx.sh status` to verify links.
+
+---
 
 ## 1. Session Start Protocol (MANDATORY)
 
 Before starting any task, read in this order:
 
 ```
-1. sample-context/MASTER_PLAN.md   → Current state + next actions
-2. sample-context/decisions.md     → Existing technical decisions
-3. sample-context/backlog.md       → Pending ideas
+1. sample-context/MASTER_PLAN.md               → Current state + next actions [Hot]
+2. sample-context/decisions.md                 → Existing technical decisions [Hot]
+3. sample-context/work-log/timeline-digest.md     → Past milestones summary (if present) [Warm]
+4. sample-context/backlog.md                   → Pending ideas [Hot]
 ```
+
+> 💡 **3-Tier Context Notice**: Detailed past logs and completed tasks are archived in `sample-context/archive/` [Cold] and excluded from session loading to optimize tokens and prevent context bloat.
 
 Then output exactly:
 
@@ -247,7 +253,11 @@ Related ADRs:  {relevant decisions, or "none"}
 
 ## 2. Auto-Detect + Record Protocol
 
-During conversation, stop and ask the user whenever a trigger is detected.
+Ask before adopting new decisions, changing scope or priorities, or adding backlog
+items unless the user has already authorized that action. Factual progress updates
+within an authorized task follow Trigger B and the session end protocol directly.
+Explicit user restrictions, including read-only requests and allowed-file limits,
+take precedence over these recording rules.
 
 ### Trigger A: Technical Decision
 Detect: new library, architecture change, tech stack selection, reverting a decision
@@ -264,7 +274,12 @@ yes → Add ADR to decisions.md, update MASTER_PLAN.md decision summary
 ---
 
 ### Trigger B: Task Status Change
-Detect: task completed, plan changed, task added/removed/reprioritized
+Detect: progress or completion of an authorized task, plan changed, task added/removed/reprioritized
+
+For factual progress or completion within the authorized scope, update only the
+affected Current State and Next Actions in MASTER_PLAN.md without asking again.
+If neither changed, leave the file unchanged. For new scope or priority changes
+that have not been authorized, ask first:
 
 ```
 [Status Change] Update MASTER_PLAN.md?
@@ -301,12 +316,39 @@ Keep / Change? (update ADR if changed)
 
 ## 3. Session End Protocol
 
-After completing work, always output:
+For each completed work unit that changes project files, including documentation:
+
+1. Verify the actual changes and run relevant available checks. Distinguish work
+   implemented, checks passed, committed, and merged; do not infer one from another.
+2. Update MASTER_PLAN.md only if the current state or next actions changed, following
+   Trigger B. Update decisions.md or backlog.md only when applicable and authorized.
+3. Record the work through the CLI, using the actual summary and relevant file paths:
+
+   ```bash
+   bash ctx.sh log --summary "What changed; validation results; remaining issues" --files "path/to/file"
+   bash ctx.sh timeline --limit 1 --json
+   ```
+
+   Check that `log` succeeded and that readback contains this work unit's summary
+   and files. If another writer added a newer entry, increase the read limit to
+   locate your entry. An existing file or JSONL row alone is not proof of success.
+4. If recording or readback fails, report the cause and mark logging as failed or
+   unverified. Do not directly create or edit timeline.jsonl to bypass the CLI.
+   Check for an existing entry before retrying; use an allowed recovery or approval
+   path, or leave recording pending when no such path is available.
+
+Read-only analysis/review does not require context edits or a work-log entry.
+Respect explicit no-logging and allowed-file restrictions; report any skipped
+closure steps instead of expanding the scope. Without filesystem or CLI access,
+provide proposed updates and commands for the user and mark them as unapplied.
+
+Then output a summary (also for read-only tasks):
 
 ```
 [Session Summary]
 ✅ Done:          {completed items}
-📝 Files changed: {modified context files}
+📝 Files changed: {modified project and context files, or "none"}
+📚 Work log:      {recorded / skipped with reason / failed / unverified}
 ⏭️ Next action:   {next priority from MASTER_PLAN}
 🔖 Open items:    {issues for next session}
 ```
@@ -320,6 +362,7 @@ After completing work, always output:
 ✗ Do not restructure MASTER_PLAN.md without user confirmation
 ✗ Do not make tech choices without explaining tradeoffs
 ✓ Follow existing architecture patterns when adding new modules
+✗ Do not commit or push unless the user requests it
 ```
 
 ---
@@ -474,7 +517,15 @@ _init_file() {
   local filepath="$CONTEXT_DIR/$filename"
   local relpath="${CONTEXT_DIR#$PROJECT_ROOT/}/$filename"
   if [ ! -f "$filepath" ]; then
-    cat > "$filepath"
+    # Keep ctx.sh standalone while rendering the configured project-relative paths.
+    CTX_TEMPLATE_CONTEXT="${CONTEXT_DIR#$PROJECT_ROOT/}" \
+      CTX_TEMPLATE_COMMAND="bash ${SCRIPT_PATH#$PROJECT_ROOT/}" python3 -c '
+import os, sys
+template = sys.stdin.read()
+template = template.replace("sample-context/", os.environ["CTX_TEMPLATE_CONTEXT"] + "/")
+template = template.replace("bash ctx.sh", os.environ["CTX_TEMPLATE_COMMAND"])
+sys.stdout.write(template)
+' > "$filepath"
     echo -e "  ${GREEN}✓${NC} $relpath created"
   else
     echo -e "  ${YELLOW}~${NC} $relpath already exists (skipped)"
