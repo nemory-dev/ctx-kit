@@ -2,7 +2,7 @@
 
 AI 코딩 에이전트가 바뀌어도 프로젝트의 결정, 진행 상황, 다음 행동을 이어가는 로컬 CLI.
 
-[English](README.md) · [시작하기](docs/ko/getting-started.md) · [설정](docs/ko/configuration.md) · [사용 흐름](docs/ko/workflows.md) · [문제 해결](docs/ko/troubleshooting.md)
+[English](README.md) · [시작하기](docs/ko/getting-started.md) · [설정](docs/ko/configuration.md) · [사용 흐름](docs/ko/workflows.md) · [문제 해결](docs/ko/troubleshooting.md) · [기여하기](CONTRIBUTING.ko.md)
 
 ctx-kit은 Bash와 Python 표준 라이브러리로 동작합니다. 편집 가능한 프로젝트 컨텍스트를 만들고, 에이전트의 지침 파일 경로를 하나의 규칙 파일에 연결하며, 작업 단위를 로컬 JSONL 타임라인에 기록합니다. LLM API를 호출하지 않으며 API 키나 서버가 필요하지 않습니다.
 
@@ -10,7 +10,7 @@ ctx-kit은 Bash와 Python 표준 라이브러리로 동작합니다. 편집 가�
 
 ## 빠른 시작
 
-Bash, Python 3.7 이상, 기본 Unix 도구가 필요합니다. 저장소 복제와 Git 연동에는 Git이 필요합니다. 현재 검사는 macOS Apple Silicon의 Bash 3.2와 Python 3.11에서 실행했습니다. Windows에서는 Git Bash, Python, 심볼릭 링크 생성 권한이 필요합니다. [Windows 설치](docs/ko/getting-started.md#windows)를 참고하세요.
+Bash, Python 3.7 이상, 기본 Unix 도구가 필요합니다. 저장소 복제와 Git 연동에는 Git이 필요합니다. CI는 Linux와 macOS에서 Python 3.11로 실행하며, macOS 검증에는 Apple Silicon과 Bash 3.2가 포함됩니다. Windows에서는 Git Bash, Python, 심볼릭 링크 생성 권한이 필요합니다. [Windows 설치](docs/ko/getting-started.md#windows)를 참고하세요.
 
 먼저 **새 데모 디렉터리**에서 확인하세요. `ctx-kit`과 `ctx-demo`가 없는 디렉터리에서 실행합니다.
 
@@ -117,10 +117,11 @@ project/
 | [설정](docs/ko/configuration.md) | 경로, 에이전트, 수집 규칙, Git 옵션 |
 | [사용 흐름](docs/ko/workflows.md) | 작업 시작·종료, 로그 조회, 보관, 공유, 기존 설치 업데이트 |
 | [문제 해결](docs/ko/troubleshooting.md) | 충돌, 지침 로딩 문제, Git 제약, 중단된 쓰기 복구 |
+| [기여하기](CONTRIBUTING.ko.md) | 로컬 검증, PR 생성, 필수 CI 확인, 머지와 main 푸시 검증 |
 
 각 가이드 상단에서 영문 문서로 이동할 수 있습니다. 이 문서는 현재 체크아웃의 소스를 설명합니다. 문서와 `ctx.sh`는 같은 리비전을 사용하세요.
 
-## 개발 검증
+## 개발과 기여
 
 별도 테스트 의존성은 필요하지 않습니다.
 
@@ -133,6 +134,17 @@ git diff --check
 테스트는 임시 프로젝트에서 초기화, 기존 규칙 보존, 기록, 동시 쓰기, archive 실패와 복구를 확인합니다. AI 모델을 실행하거나 지침 준수를 증명하지는 않습니다. 현재 macOS 테스트 환경에서 Windows 실행은 검증하지 않았습니다.
 
 루트 `AGENT_RULES.md`와 `ctx.sh`에 내장된 템플릿을 일치시키세요. 내장본 덕분에 스크립트와 설정만 복사해 설치할 수 있으며, 초기화 테스트가 템플릿 차이를 검사합니다.
+
+[CI](.github/workflows/ci.yml)는 문서 변경을 포함한 모든 PR과 `main` 푸시에서 위 Bash 문법 검사와 전체 unittest 명령을 실행합니다. 각 실행은 `ubuntu-latest`와 `macos-latest`에서 Python 3.11을 사용합니다.
+
+이 저장소의 `main` 변경은 관리자도 PR을 거쳐야 합니다. 다음 GitHub Actions 검사 두 개가 모두 필수입니다.
+
+- `Regression tests (ubuntu-latest)`
+- `Regression tests (macos-latest)`
+
+PR에는 최신 `main` 변경이 반영되어야 합니다. `main` 강제 푸시와 삭제는 금지되어 있습니다. 필수 리뷰 승인 인원은 **0명**이며, PR과 두 CI 결과는 반드시 필요합니다. 이 보호 정책은 워크플로 파일과 별개로 GitHub에서 설정합니다.
+
+작업 브랜치에서 로컬 검증을 실행하고, 검토한 파일만 커밋·푸시해 `main` 대상 PR을 만드세요. 머지 전에는 두 필수 검사를, 머지 후에는 별도의 `main` 푸시 CI를 확인합니다. [기여 가이드](CONTRIBUTING.ko.md)에 전체 명령과 fork 사용, 최신 main 반영, 브랜치 정리 절차를 정리했습니다.
 
 ## 라이선스
 
