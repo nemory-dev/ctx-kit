@@ -72,6 +72,259 @@ ctx_git() {
   git -c safe.directory=* -C "$CONTEXT_DIR" "$@"
 }
 
+# Shared storage primitives keep the copied CLI standalone.
+context_python() {
+  CTX_STORAGE_DIR="$(py_path "$CONTEXT_DIR")" python3 -c '
+import errno
+import hashlib
+import json
+import os
+import stat
+import sys
+import tempfile
+import time
+from contextlib import contextmanager
+
+
+def read_jsonl(path):
+    try:
+        stream = open(path, encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    entries = []
+    with stream:
+        for number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError as error:
+                raise ValueError(f"{path}: invalid JSON at line {number}: {error}") from error
+            if not isinstance(entry, dict):
+                raise ValueError(f"{path}: expected a JSON object at line {number}")
+            entries.append(entry)
+    return entries
+
+
+def stage_text_writes(writes):
+    staged = []
+    try:
+        for path, text in writes:
+            path = os.fspath(path)
+            mode = None
+            try:
+                existing = os.stat(path, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if not stat.S_ISREG(existing.st_mode):
+                    raise OSError(f"Refusing to replace non-regular file: {path}")
+                mode = stat.S_IMODE(existing.st_mode)
+            directory = os.path.dirname(os.path.abspath(path))
+            os.makedirs(directory, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=".ctx-write-", dir=directory)
+            staged.append((path, temporary))
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(text)
+                stream.flush()
+                if mode is not None:
+                    os.chmod(temporary, mode)
+                os.fsync(stream.fileno())
+        return staged
+    except BaseException:
+        for _, temporary in staged:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        raise
+
+
+def sync_directory(path):
+    if os.name != "nt":
+        directory = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
+def replace_staged_text_writes(staged):
+    try:
+        for path, temporary in staged:
+            os.replace(temporary, path)
+            sync_directory(os.path.dirname(os.path.abspath(path)))
+    finally:
+        for _, temporary in staged:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
+def atomic_write_text(path, text):
+    replace_staged_text_writes(stage_text_writes([(path, text)]))
+
+
+def append_jsonl(path, entry):
+    entries = read_jsonl(path)
+    entries.append(entry)
+    atomic_write_text(path, "".join(json.dumps(item, ensure_ascii=False) + "\n"
+                                  for item in entries))
+
+
+def archive_journal_path():
+    return os.path.join(os.environ["CTX_STORAGE_DIR"], "work-log", ".ctx-archive-transaction.json")
+
+
+def file_digest(path):
+    try:
+        with open(path, "rb") as stream:
+            return hashlib.sha256(stream.read()).hexdigest()
+    except FileNotFoundError:
+        return None
+
+
+def clear_archive_journal():
+    path = archive_journal_path()
+    os.unlink(path)
+    sync_directory(os.path.dirname(path))
+
+
+def transactional_text_writes(writes):
+    if not writes:
+        return
+    staged = stage_text_writes(writes)
+    try:
+        root = os.path.realpath(os.environ["CTX_STORAGE_DIR"])
+        records = []
+        for path, text in writes:
+            if os.path.commonpath([root, os.path.realpath(path)]) != root:
+                raise ValueError(f"Archive destination is outside the context directory: {path}")
+            records.append({"path": os.path.relpath(path, root),
+                            "before": file_digest(path), "after": text})
+        # Persist newly created archive/work-log directory entries before intent.
+        sync_directory(root)
+        atomic_write_text(archive_journal_path(), json.dumps({"version": 1, "writes": records}))
+        replace_staged_text_writes(staged)
+        clear_archive_journal()
+    finally:
+        for _, temporary in staged:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
+def recover_archive():
+    journal = archive_journal_path()
+    if not os.path.lexists(journal):
+        return
+    if os.path.islink(journal):
+        raise ValueError(f"Refusing a symlinked archive recovery journal: {journal}")
+    with open(journal, encoding="utf-8") as stream:
+        pending = json.load(stream)
+    if not isinstance(pending, dict) or pending.get("version") != 1 or not isinstance(pending.get("writes"), list):
+        raise ValueError(f"Invalid archive recovery journal: {journal}")
+    root = os.path.realpath(os.environ["CTX_STORAGE_DIR"])
+    writes = []
+    seen = set()
+    for record in pending["writes"]:
+        if (not isinstance(record, dict) or not isinstance(record.get("path"), str)
+                or not isinstance(record.get("after"), str)
+                or not (record.get("before") is None or isinstance(record["before"], str))):
+            raise ValueError(f"Invalid archive recovery record: {journal}")
+        path = os.path.join(root, record["path"])
+        if (os.path.isabs(record["path"]) or os.path.commonpath([root, os.path.realpath(path)]) != root
+                or os.path.realpath(path) in seen or os.path.islink(path)):
+            raise ValueError("Unsafe archive recovery path: " + record["path"])
+        seen.add(os.path.realpath(path))
+        current = file_digest(path)
+        after = hashlib.sha256(record["after"].encode("utf-8")).hexdigest()
+        if current not in (record["before"], after):
+            raise ValueError(f"Cannot recover archive: file changed outside the pending transaction: {path}. Preserve the journal and reconcile the changes before retrying.")
+        if current != after:
+            writes.append((path, record["after"]))
+    replace_staged_text_writes(stage_text_writes(writes))
+    clear_archive_journal()
+    print("Recovered interrupted archive transaction.", file=sys.stderr)
+
+
+@contextmanager
+def context_lock():
+    directory = os.path.join(os.environ["CTX_STORAGE_DIR"], "work-log")
+    os.makedirs(directory, exist_ok=True)
+    sync_directory(os.environ["CTX_STORAGE_DIR"])
+    path = os.path.join(directory, ".ctx.lock")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(path, flags, 0o600), "r+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            if os.fstat(lock.fileno()).st_size == 0:
+                lock.write(b"\0")
+                lock.flush()
+            def acquire():
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            def release():
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            def acquire():
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            def release():
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                acquire()
+                break
+            except OSError as error:
+                if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Timed out waiting for context writer lock: {path}") from error
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            release()
+
+
+try:
+    with context_lock():
+        recover_archive()
+        exec(compile(sys.stdin.read(), "<ctx storage>", "exec"), globals())
+except (OSError, ValueError) as error:
+    print(f"Error: {error}", file=sys.stderr)
+    sys.exit(1)
+'
+}
+
+context_git_commit() {
+  CTX_GIT_MESSAGE="$1" CTX_GIT_NOTICE="${2:-}" context_python <<'PYEOF'
+import subprocess
+
+command = ["git", "-c", "safe.directory=*", "-C", os.environ["CTX_STORAGE_DIR"]]
+
+def git(args):
+    result = subprocess.run(command + args)
+    if result.returncode:
+        raise SystemExit(result.returncode)
+
+git(["add", "-A", "--", ".", ":(exclude,literal)work-log/.ctx.lock",
+     ":(exclude,literal)work-log/.ctx-archive-transaction.json",
+     ":(exclude,glob)**/.ctx-write-*"])
+head = subprocess.run(command + ["rev-parse", "--verify", "HEAD"],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+changed = head.returncode != 0
+if not changed:
+    result = subprocess.run(command + ["diff-index", "--quiet", "HEAD", "--"])
+    if result.returncode not in (0, 1):
+        raise SystemExit(result.returncode)
+    changed = result.returncode == 1
+if changed:
+    git(["commit", "-m", os.environ["CTX_GIT_MESSAGE"], "--quiet"])
+    if os.environ["CTX_GIT_NOTICE"]:
+        print(os.environ["CTX_GIT_NOTICE"])
+PYEOF
+}
+
 require_python() {
   if ! command -v python3 &>/dev/null; then
     echo -e "${RED}Error: python3 is required.${NC}" >&2; exit 1
@@ -608,6 +861,42 @@ cmd_sync() {
     return 1
   fi
 
+  # Detect every enabled target conflict before changing links or metadata.
+  if ! python3 - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" "$(py_path "$SOURCE_PATH")" <<'PY'
+import json
+import os
+import sys
+
+config_path, root, source = sys.argv[1:]
+with open(config_path, encoding="utf-8") as stream:
+    agents = json.load(stream)["agent_rules"]
+
+def entry_path(path):
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+conflicts = []
+seen = set()
+for agent in agents:
+    if str(agent["enabled"]).lower() != "true" or agent["path"] in seen:
+        continue
+    path = agent["path"]
+    seen.add(path)
+    target = root + os.sep + path
+    if entry_path(target) == entry_path(source):
+        conflicts.append((path, "target is the configured source file; choose a different agent path in ctx.config.json."))
+    elif os.path.lexists(target) and not (
+        os.path.islink(target) and os.path.realpath(target) == os.path.realpath(source)
+    ):
+        conflicts.append((path, "already exists and is not a ctx-managed symlink. Move or rename it, then run bash ctx.sh sync."))
+
+for path, reason in conflicts:
+    print(f"  Conflict: {path}: {reason}", file=sys.stderr)
+sys.exit(1 if conflicts else 0)
+PY
+  then
+    return 1
+  fi
+
   # Auto-update Last Updated in MASTER_PLAN.md
   MASTER_PLAN="$CONTEXT_DIR/MASTER_PLAN.md"
   if [ -f "$MASTER_PLAN" ]; then
@@ -623,15 +912,43 @@ cmd_sync() {
   get_agents | while IFS="|" read -r name path enabled; do
     LINK_PATH="$PROJECT_ROOT/$path"
     if [ "$enabled" = "True" ] || [ "$enabled" = "true" ]; then
-      ([ -L "$LINK_PATH" ] || [ -f "$LINK_PATH" ]) && rm "$LINK_PATH"
-      mkdir -p "$(dirname "$LINK_PATH")"
-      RELATIVE=$(python3 -c "import os; print(os.path.relpath('$SOURCE_PATH', os.path.dirname('$LINK_PATH')))")
-      ln -s "$RELATIVE" "$LINK_PATH"
+      if [ ! -L "$LINK_PATH" ]; then
+        mkdir -p "$(dirname "$LINK_PATH")"
+        RELATIVE=$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))' "$(py_path "$SOURCE_PATH")" "$(py_path "$LINK_PATH")")
+        ln -s "$RELATIVE" "$LINK_PATH"
+      fi
       echo -e "  ${GREEN}✓${NC} $name: $path → $SOURCE"
     else
       if echo "$ENABLED_PATHS" | grep -qx "$path"; then
         echo -e "  ${YELLOW}-${NC} $name ($path) disabled — kept (shared with an enabled agent)"
-      elif [ -L "$LINK_PATH" ]; then
+      elif [ -L "$LINK_PATH" ] && python3 - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" "$(py_path "$SOURCE_PATH")" "$(py_path "$LINK_PATH")" <<'PY'
+import json
+import os
+import sys
+
+def entry_path(path):
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+config_path, root, source, target = sys.argv[1:]
+with open(config_path, encoding="utf-8") as stream:
+    agents = json.load(stream)["agent_rules"]
+protected = [source] + [root + os.sep + agent["path"] for agent in agents
+                        if str(agent["enabled"]).lower() == "true"]
+target_entry = entry_path(target)
+for path in protected:
+    current = entry_path(path)
+    seen = set()
+    while current not in seen:
+        # Keep dependencies of the source and every enabled rule link.
+        if current == target_entry:
+            sys.exit(1)
+        seen.add(current)
+        if not os.path.islink(current):
+            break
+        current = entry_path(os.path.join(os.path.dirname(current), os.readlink(current)))
+sys.exit(0 if os.path.realpath(target) == os.path.realpath(source) else 1)
+PY
+      then
         rm "$LINK_PATH"
         echo -e "  ${YELLOW}-${NC} $name: $path symlink removed (disabled)"
       else
@@ -926,29 +1243,38 @@ cmd_log() {
   local CTX_COMMAND="bash ${SCRIPT_PATH#$PROJECT_ROOT/}"
   mkdir -p "$LOG_DIR"
 
-  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_SUMMARY="$SUMMARY" CTX_TITLE="$TITLE" CTX_COMMIT="$COMMIT" CTX_FILES="$FILES" CTX_TYPE="$TYPE" CTX_COMMAND="$CTX_COMMAND" python3 << 'PYEOF'
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_SUMMARY="$SUMMARY" CTX_TITLE="$TITLE" CTX_COMMIT="$COMMIT" CTX_FILES="$FILES" CTX_TYPE="$TYPE" CTX_COMMAND="$CTX_COMMAND" context_python << 'PYEOF'
 import json
 import os
 import subprocess
+from uuid import uuid4
 from datetime import datetime, timezone
 
 root = os.environ["CTX_ROOT"]
 log_file = os.environ["CTX_LOG_FILE"]
 summary = os.environ["CTX_SUMMARY"].strip()
+if not summary:
+    raise ValueError("Work-log summary must not be empty")
 title = os.environ["CTX_TITLE"].strip() or summary.splitlines()[0][:80]
 commit = os.environ["CTX_COMMIT"].strip()
 files = [f.strip() for f in os.environ["CTX_FILES"].split(",") if f.strip()]
 entry_type = os.environ["CTX_TYPE"].strip() or "work"
 ctx_command = os.environ["CTX_COMMAND"].strip() or "bash ctx.sh"
 
-def git(args, default=""):
+def git(args, default="", strip=True):
     try:
-        return subprocess.check_output(["git", "-C", root, *args], text=True, stderr=subprocess.DEVNULL).strip()
+        output = subprocess.check_output(["git", "-C", root, *args], text=True, stderr=subprocess.DEVNULL)
+        return output.strip() if strip else output
     except Exception:
         return default
 
 branch = git(["branch", "--show-current"], "")
-dirty = bool(git(["status", "--short"], ""))
+status_args = ["status", "--porcelain", "--", "."]
+lock_path = os.path.relpath(os.path.join(os.environ["CTX_STORAGE_DIR"], "work-log", ".ctx.lock"), root)
+if not (lock_path == ".." or lock_path.startswith(".." + os.sep)):
+    status_args.append(":(exclude,literal)" + lock_path.replace(os.sep, "/"))
+status = git(status_args, "", strip=False)
+dirty = bool(status)
 
 if not commit:
     commit = "uncommitted" if dirty else git(["rev-parse", "--short", "HEAD"], "uncommitted")
@@ -959,17 +1285,10 @@ if not files and commit != "uncommitted":
     changed = git(["show", "--name-only", "--format=", commit], "")
     files = [line for line in changed.splitlines() if line.strip()]
 elif not files:
-    try:
-        raw = subprocess.check_output(
-            ["git", "-C", root, "status", "--porcelain"],
-            text=True, stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        raw = ""
-    files = [line[3:] for line in raw.splitlines() if len(line) > 3]
+    files = [line[3:] for line in status.splitlines() if len(line) > 3]
 
 entry = {
-    "id": f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{commit}",
+    "id": str(uuid4()),
     "createdAt": datetime.now(timezone.utc).isoformat(),
     "type": entry_type,
     "title": title,
@@ -981,8 +1300,7 @@ entry = {
     "files": files,
 }
 
-with open(log_file, "a", encoding="utf-8") as f:
-    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+append_jsonl(log_file, entry)
 
 readme = os.path.join(os.path.dirname(log_file), "README.md")
 if not os.path.exists(readme):
@@ -1106,7 +1424,7 @@ cmd_backfill() {
   local LOG_FILE="$LOG_DIR/timeline.jsonl"
   mkdir -p "$LOG_DIR"
 
-  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_LIMIT="$LIMIT" CTX_ALL="$ALL_MODE" CTX_TYPE="$TYPE" python3 << 'PYEOF'
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_LIMIT="$LIMIT" CTX_ALL="$ALL_MODE" CTX_TYPE="$TYPE" context_python << 'PYEOF'
 import json
 import os
 import subprocess
@@ -1119,21 +1437,12 @@ all_mode = os.environ["CTX_ALL"] == "true"
 entry_type = os.environ["CTX_TYPE"]
 
 existing_commits = set()
-existing_entries = []
-if os.path.exists(log_file):
-    with open(log_file, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    entry = json.loads(line)
-                    existing_entries.append(entry)
-                    if entry.get("fullCommit"):
-                        existing_commits.add(entry["fullCommit"])
-                    if entry.get("commit"):
-                        existing_commits.add(entry["commit"])
-                except Exception:
-                    pass
+existing_entries = read_jsonl(log_file)
+for entry in existing_entries:
+    if entry.get("fullCommit"):
+        existing_commits.add(entry["fullCommit"])
+    if entry.get("commit"):
+        existing_commits.add(entry["commit"])
 
 git_cmd = ["git", "-C", root, "log", "--date=iso-strict"]
 if not all_mode:
@@ -1205,17 +1514,19 @@ if not new_entries:
 all_combined = existing_entries + new_entries
 all_combined.sort(key=lambda x: x.get("createdAt", ""))
 
-with open(log_file, "w", encoding="utf-8") as f:
-    for entry in all_combined:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
+writes = []
 readme = os.path.join(os.path.dirname(log_file), "README.md")
 if not os.path.exists(readme):
-    with open(readme, "w", encoding="utf-8") as f:
-        f.write("# Work Log\n\n")
-        f.write("Commit/work-unit timeline generated by `ctx log` & `ctx backfill`.\n\n")
-        f.write("- Source of truth: `timeline.jsonl`\n")
-        f.write("- View: `ctx timeline --limit 20`\n")
+    writes.append((readme,
+        "# Work Log\n\n"
+        "Commit/work-unit timeline generated by `ctx log` & `ctx backfill`.\n\n"
+        "- Source of truth: `timeline.jsonl`\n"
+        "- View: `ctx timeline --limit 20`\n"
+    ))
+writes.append((log_file, "".join(
+    json.dumps(entry, ensure_ascii=False) + "\n" for entry in all_combined
+)))
+replace_staged_text_writes(stage_text_writes(writes))
 
 print(f"[ctx backfill] ✓ Backfilled {len(new_entries)} commit(s) into timeline.jsonl")
 PYEOF
@@ -1230,7 +1541,13 @@ cmd_archive() {
   local KEEP="30" DO_TASKS="true" DO_LOGS="true" DO_DECISIONS="true"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --keep|-k) KEEP="$2"; shift 2 ;;
+      --keep|-k)
+        if [ $# -lt 2 ]; then
+          echo "Error: --keep requires a non-negative integer." >&2
+          return 1
+        fi
+        KEEP="$2"; shift 2
+        ;;
       --no-tasks)     DO_TASKS="false"; shift ;;
       --no-logs)      DO_LOGS="false"; shift ;;
       --no-decisions) DO_DECISIONS="false"; shift ;;
@@ -1248,13 +1565,20 @@ cmd_archive() {
     esac
   done
 
+  case "$KEEP" in
+    ''|*[!0-9]*)
+      echo "Error: --keep requires a non-negative integer." >&2
+      return 1
+      ;;
+  esac
+
   echo -e "${BOLD}[ctx archive] Archiving completed tasks, old logs, and deprecated decisions${NC}"
   echo ""
 
   local ARCHIVE_DIR="$CONTEXT_DIR/archive"
   mkdir -p "$ARCHIVE_DIR"
 
-  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_DIR="$(py_path "$CONTEXT_DIR")" CTX_KEEP="$KEEP" CTX_TASKS="$DO_TASKS" CTX_LOGS="$DO_LOGS" CTX_DECISIONS="$DO_DECISIONS" python3 << 'PYEOF'
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_DIR="$(py_path "$CONTEXT_DIR")" CTX_KEEP="$KEEP" CTX_TASKS="$DO_TASKS" CTX_LOGS="$DO_LOGS" CTX_DECISIONS="$DO_DECISIONS" context_python << 'PYEOF'
 import json
 import os
 import re
@@ -1270,7 +1594,32 @@ do_decisions = os.environ.get("CTX_DECISIONS", "true") == "true"
 
 today_str = datetime.now().strftime("%Y-%m-%d")
 
-# 1. Archive Completed Tasks from MASTER_PLAN.md
+# Validate every JSONL input before preparing any source changes. Existing
+# archive months also feed the digest, including months receiving no new logs.
+timeline_path = os.path.join(context_dir, "work-log", "timeline.jsonl")
+entries = read_jsonl(timeline_path) if do_logs else []
+archive_entries = {
+    name: read_jsonl(os.path.join(archive_dir, name))
+    for name in sorted(os.listdir(archive_dir))
+    if name.startswith("timeline-") and name.endswith(".jsonl")
+}
+destination_writes = []
+source_writes = []
+messages = []
+
+
+def read_text(path):
+    if not os.path.exists(path):
+        return ""
+    with open(path, encoding="utf-8") as stream:
+        return stream.read()
+
+
+def jsonl_text(records):
+    return "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records)
+
+
+# Prepare task archival without changing MASTER_PLAN.md yet.
 if do_tasks:
     master_plan_path = os.path.join(context_dir, "MASTER_PLAN.md")
     if os.path.exists(master_plan_path):
@@ -1300,23 +1649,19 @@ if do_tasks:
                     full_text = notice + full_text
                 new_lines = [full_text]
 
-            with open(master_plan_path, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
-
             archive_task_path = os.path.join(archive_dir, "completed-tasks.md")
-            exists = os.path.exists(archive_task_path)
-            with open(archive_task_path, "a", encoding="utf-8") as f:
-                if not exists:
-                    f.write("# Completed Tasks Archive\n\n> Historical record of completed tasks moved from MASTER_PLAN.md\n\n")
-                f.write(f"\n### Archived on {today_str}\n\n")
-                for task in completed_tasks:
-                    f.write(task + "\n")
-
-            print(f"  ✓ Archived {len(completed_tasks)} completed task(s) → archive/completed-tasks.md")
+            archived = read_text(archive_task_path)
+            if not os.path.exists(archive_task_path):
+                archived = "# Completed Tasks Archive\n\n> Historical record of completed tasks moved from MASTER_PLAN.md\n\n"
+            archived += f"\n### Archived on {today_str}\n\n"
+            archived += "".join(task + "\n" for task in completed_tasks)
+            destination_writes.append((archive_task_path, archived))
+            source_writes.append((master_plan_path, "".join(new_lines)))
+            messages.append(f"  ✓ Archived {len(completed_tasks)} completed task(s) → archive/completed-tasks.md")
         else:
-            print(f"  ~ No completed tasks to archive in MASTER_PLAN.md")
+            messages.append("  ~ No completed tasks to archive in MASTER_PLAN.md")
 
-# 2. Archive Deprecated / Superseded Decisions from decisions.md
+# Prepare deprecated/superseded decision archival.
 if do_decisions:
     decisions_path = os.path.join(context_dir, "decisions.md")
     if os.path.exists(decisions_path):
@@ -1343,13 +1688,12 @@ if do_decisions:
 
         if deprecated_adrs:
             archive_dec_path = os.path.join(archive_dir, "decisions-deprecated.md")
-            exists = os.path.exists(archive_dec_path)
-            with open(archive_dec_path, "a", encoding="utf-8") as f:
-                if not exists:
-                    f.write("# Deprecated Architecture Decisions Archive\n\n> Historical record of deprecated or superseded ADRs moved from decisions.md\n\n---\n\n")
-                f.write(f"\n### Archived on {today_str}\n\n")
-                for d in deprecated_adrs:
-                    f.write(d + "\n\n---\n\n")
+            archived = read_text(archive_dec_path)
+            if not os.path.exists(archive_dec_path):
+                archived = "# Deprecated Architecture Decisions Archive\n\n> Historical record of deprecated or superseded ADRs moved from decisions.md\n\n---\n\n"
+            archived += f"\n### Archived on {today_str}\n\n"
+            archived += "".join(adr + "\n\n---\n\n" for adr in deprecated_adrs)
+            destination_writes.append((archive_dec_path, archived))
 
             if "archive/decisions-deprecated.md" not in header:
                 header_m = re.search(r"(#\s+.*?\n)", header)
@@ -1364,116 +1708,77 @@ if do_decisions:
             for a in active_adrs:
                 new_decisions_content += a + "\n\n"
 
-            with open(decisions_path, "w", encoding="utf-8") as f:
-                f.write(new_decisions_content)
-
-            print(f"  ✓ Archived {len(deprecated_adrs)} deprecated ADR(s) → archive/decisions-deprecated.md")
+            source_writes.append((decisions_path, new_decisions_content))
+            messages.append(f"  ✓ Archived {len(deprecated_adrs)} deprecated ADR(s) → archive/decisions-deprecated.md")
         else:
-            print(f"  ~ No deprecated ADRs to archive in decisions.md")
+            messages.append("  ~ No deprecated ADRs to archive in decisions.md")
 
-# 3. Archive timeline logs & split by month
+# Every moving row is a distinct occurrence, even with identical legacy data.
+# The transaction journal identifies interrupted retries without deduplication.
 archived_log_count = 0
-if do_logs:
-    timeline_path = os.path.join(context_dir, "work-log", "timeline.jsonl")
-    if os.path.exists(timeline_path):
-        entries = []
-        with open(timeline_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        entries.append(json.loads(line))
-                    except Exception:
-                        pass
+if do_logs and os.path.exists(timeline_path):
+    if len(entries) > keep_count:
+        cutoff = len(entries) - keep_count
+        to_archive = entries[:cutoff]
+        to_keep = entries[cutoff:]
 
-        if len(entries) > keep_count:
-            cutoff = len(entries) - keep_count
-            to_archive = entries[:cutoff]
-            to_keep = entries[cutoff:]
+        monthly_groups = {}
+        for item in to_archive:
+            created = item.get("createdAt", "")
+            month = created[:7] if re.match(r"^\d{4}-\d{2}", created) else "legacy"
+            monthly_groups.setdefault(month, []).append(item)
 
-            monthly_groups = {}
-            for item in to_archive:
-                created = item.get("createdAt", "")
-                month = created[:7] if len(created) >= 7 and created[:4].isdigit() else "legacy"
-                monthly_groups.setdefault(month, []).append(item)
+        for month, group in monthly_groups.items():
+            name = f"timeline-{month}.jsonl"
+            monthly_entries = list(archive_entries.get(name, []))
+            monthly_entries.extend(group)
+            archived_log_count += len(group)
+            archive_entries[name] = monthly_entries
+            destination_writes.append((os.path.join(archive_dir, name), jsonl_text(monthly_entries)))
 
-            for month, group in monthly_groups.items():
-                month_file = os.path.join(archive_dir, f"timeline-{month}.jsonl")
-                existing_ids = set()
-                if os.path.exists(month_file):
-                    with open(month_file, "r", encoding="utf-8") as f:
-                        for l in f:
-                            l = l.strip()
-                            if l:
-                                try:
-                                    e = json.loads(l)
-                                    if e.get("id"):
-                                        existing_ids.add(e["id"])
-                                except Exception:
-                                    pass
+        source_writes.append((timeline_path, jsonl_text(to_keep)))
+        messages.append(f"  ✓ Archived {archived_log_count} log entries → archive/timeline-YYYY-MM.jsonl (kept {len(to_keep)} active)")
+    else:
+        messages.append(f"  ~ Timeline entries ({len(entries)}) <= keep threshold ({keep_count}), no logs to archive")
 
-                with open(month_file, "a", encoding="utf-8") as f:
-                    for e in group:
-                        if e.get("id") not in existing_ids:
-                            f.write(json.dumps(e, ensure_ascii=False) + "\n")
-                            archived_log_count += 1
-
-            with open(timeline_path, "w", encoding="utf-8") as f:
-                for e in to_keep:
-                    f.write(json.dumps(e, ensure_ascii=False) + "\n")
-
-            print(f"  ✓ Archived {archived_log_count} log entries → archive/timeline-YYYY-MM.jsonl (kept {len(to_keep)} active)")
-        else:
-            print(f"  ~ Timeline entries ({len(entries)}) <= keep threshold ({keep_count}), no logs to archive")
-
-# 3. Generate Warm Digest: work-log/timeline-digest.md
-archive_files = sorted([
-    f for f in os.listdir(archive_dir)
-    if f.startswith("timeline-") and f.endswith(".jsonl")
-])
-
-if archive_files:
+# Build the digest from the prospective archive before replacing any files.
+digest_writes = []
+if archive_entries:
     digest_path = os.path.join(context_dir, "work-log", "timeline-digest.md")
-    with open(digest_path, "w", encoding="utf-8") as f:
-        f.write("# Timeline Digest & Milestones\n\n")
-        f.write("> Compressed summary of archived past work units and milestones.\n")
-        f.write(f"> Last Generated: {today_str}\n\n")
+    digest = [
+        "# Timeline Digest & Milestones\n\n",
+        "> Compressed summary of archived past work units and milestones.\n",
+        f"> Last Generated: {today_str}\n\n",
+    ]
+    for name, month_entries in sorted(archive_entries.items()):
+        month_label = name[len("timeline-"):-len(".jsonl")]
+        if month_entries:
+            digest.append(f"## Milestone {month_label} ({len(month_entries)} units)\n\n")
+            for entry in month_entries:
+                date_prefix = entry.get("createdAt", "")[:10]
+                title = entry.get("title", "")
+                commit = entry.get("commit", "")
+                commit_tag = f" `[{commit}]`" if commit and commit not in ("uncommitted", "pending") else ""
+                digest.append(f"- **{date_prefix}**: {title}{commit_tag}\n")
+            digest.append("\n")
+    digest_writes.append((digest_path, "".join(digest)))
+    messages.append("  ✓ Generated warm milestone digest → work-log/timeline-digest.md")
 
-        for fname in archive_files:
-            month_label = fname.replace("timeline-", "").replace(".jsonl", "")
-            fpath = os.path.join(archive_dir, fname)
-            month_entries = []
-            with open(fpath, "r", encoding="utf-8") as mf:
-                for line in mf:
-                    line = line.strip()
-                    if line:
-                        try:
-                            month_entries.append(json.loads(line))
-                        except Exception:
-                            pass
-
-            if month_entries:
-                f.write(f"## Milestone {month_label} ({len(month_entries)} units)\n\n")
-                for e in month_entries:
-                    date_prefix = e.get("createdAt", "")[:10]
-                    title = e.get("title", "")
-                    commit = e.get("commit", "")
-                    commit_tag = f" `[{commit}]`" if commit and commit != "uncommitted" and commit != "pending" else ""
-                    f.write(f"- **{date_prefix}**: {title}{commit_tag}\n")
-                f.write("\n")
-
-    print(f"  ✓ Generated warm milestone digest → work-log/timeline-digest.md")
+# Stage everything before persisting the recovery journal and replacing files.
+# The journal rolls interrupted replacements forward before the next writer,
+# preserving each occurrence without mistaking matching new rows for retries.
+writes = destination_writes + digest_writes + source_writes
+transactional_text_writes(writes)
+for message in messages:
+    print(message)
 PYEOF
 
   # 4. Auto-commit archives to local context Git if initialized
   if [ -d "$CONTEXT_DIR/.git" ]; then
-    ctx_git add -A
-    if ! ctx_git diff-index --quiet HEAD -- 2>/dev/null; then
-      local timestamp
-      timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-      ctx_git commit -m "chore(context): archive completed tasks, past logs, and decisions ($timestamp)" --quiet
-      echo -e "  ${GREEN}✓${NC} Auto-committed archives to local context Git."
-    fi
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    context_git_commit "chore(context): archive completed tasks, past logs, and decisions ($timestamp)" \
+      "  ✓ Auto-committed archives to local context Git."
   fi
 
   echo ""
@@ -1519,8 +1824,7 @@ _hook_install() {
   mkdir -p "$CONTEXT_DIR"
   if [ ! -d "$CONTEXT_DIR/.git" ]; then
     ctx_git init --quiet
-    ctx_git add -A
-    ctx_git commit -m "chore: initialize local context repository" --quiet 2>/dev/null || true
+    context_git_commit "chore: initialize local context repository" 2>/dev/null || true
     echo -e "  ${GREEN}✓${NC} Initialized independent Git repository in ${rel_context_dir}/"
   else
     echo -e "  ${YELLOW}~${NC} ${rel_context_dir}/ is already an initialized Git repo"
@@ -1689,10 +1993,11 @@ print(f\"{gs.get('enabled', False)}|{gs.get('auto_log', False)}\")")
       local LOG_FILE="$LOG_DIR/timeline.jsonl"
       mkdir -p "$LOG_DIR"
 
-      CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" python3 << 'PYEOF'
+      CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" context_python << 'PYEOF'
 import json
 import os
 import subprocess
+from uuid import uuid4
 from datetime import datetime, timezone
 
 root = os.environ["CTX_ROOT"]
@@ -1719,7 +2024,7 @@ if staged_names:
     now = datetime.now(timezone.utc)
 
     entry = {
-        "id": f"{now.strftime('%Y%m%dT%H%M%SZ')}-precommit",
+        "id": str(uuid4()),
         "createdAt": now.isoformat(),
         "type": "work",
         "title": title,
@@ -1731,8 +2036,7 @@ if staged_names:
         "files": staged_names,
     }
 
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    append_jsonl(log_file, entry)
 
     print(f"[ctx] 📝 Auto-recorded work-log before commit: {title}")
 PYEOF
@@ -1740,13 +2044,10 @@ PYEOF
   fi
 
   if [ -d "$CONTEXT_DIR/.git" ]; then
-    ctx_git add -A
-    if ! ctx_git diff-index --quiet HEAD -- 2>/dev/null; then
-      local timestamp
-      timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-      ctx_git commit -m "Auto-sync local context ($timestamp)" --quiet
-      echo -e "[ctx] 🔒 Auto-committed local context (${rel_context_dir}) to local Git."
-    fi
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    context_git_commit "Auto-sync local context ($timestamp)" \
+      "[ctx] 🔒 Auto-committed local context (${rel_context_dir}) to local Git."
   fi
 
   exit 0
