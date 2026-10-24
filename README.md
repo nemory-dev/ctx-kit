@@ -1,363 +1,124 @@
 # ctx-kit
 
-> A lightweight CLI that gives all your AI agents the same project context.
->
-> 🇰🇷 한국어 버전: [README.ko.md](README.ko.md)
+Keep project decisions, progress, and next actions available when you switch AI coding agents.
 
-When working with multiple AI agents (Claude Code, Codex, Antigravity, Cursor, etc.), each agent starts a session without knowing what decisions were made, what's already built, or what the current priorities are.
+[한국어](README.ko.md) · [Getting started](docs/en/getting-started.md) · [Configuration](docs/en/configuration.md) · [Workflows](docs/en/workflows.md) · [Troubleshooting](docs/en/troubleshooting.md)
 
-```
-Problem: Every agent starts blind → repeated explanations, forgotten decisions, inconsistent direction
-Solution: One AGENT_RULES.md as the single source of truth, symlinked to every agent's rule file
-```
+ctx-kit is a small Bash CLI backed by Python's standard library. It creates editable project context, links instruction-file paths to one rules file, and records work units in a local JSONL timeline. It makes no LLM API calls and needs no API key or hosted service.
 
----
+Use it when a new session needs to know **what was decided, what changed, what was verified, and what comes next**. The files travel between tools; the agent still has to read and follow them.
 
-## Quick Start
+## Quick start
+
+Requires Bash, Python 3.7 or later, and standard Unix tools. Git is needed to clone this repository and use Git integration. Current checks run on macOS Apple Silicon with Bash 3.2 and Python 3.11. Windows needs Git Bash, Python, and symlink creation permission; see [Windows installation](docs/en/getting-started.md#windows).
+
+Try a **new demo directory** first. Run this from a directory without an existing `ctx-kit` or `ctx-demo`:
 
 ```bash
-# 1. Clone the repo
 git clone https://github.com/nemory-dev/ctx-kit.git
-
-# 2. Copy to your project root
-cp ctx-kit/ctx.sh /your/project/
-cp ctx-kit/ctx.config.json /your/project/
-
-# 3. Initialize (once per project)
-cd /your/project
-bash ctx.sh init
-
-# 4. Check status
+mkdir ctx-demo
+cp ctx-kit/ctx.sh ctx-kit/ctx.config.json ctx-demo/
+cd ctx-demo
+bash ctx.sh init --no-hook --no-backfill
 bash ctx.sh status
 ```
 
-Or if you prefer `scripts/` subdirectory:
+This creates `sample-context/` and the configured rule links. The flags skip Git hook installation and history import. For an existing project, follow the [existing-project procedure](docs/en/getting-started.md#existing-projects) to preserve its configuration and rules.
+
+Record and read back the setup:
 
 ```bash
-cp ctx-kit/ctx.sh /your/project/scripts/
-cp ctx-kit/ctx.config.json /your/project/
-
-cd /your/project
-bash scripts/ctx.sh init
-```
-
----
-
-## How It Works
-
-```
-ctx.config.json            ← Agent path registry (only edit this to add agents)
-        ↓  ctx sync
-CLAUDE.md ──┐
-AGENTS.md ──┼──→ sample-context/AGENT_RULES.md  (Single Source of Truth)
-GEMINI.md ──┘
-```
-
-Register agent rule file paths in `ctx.config.json`, run `ctx sync`, and all rule files become symlinks pointing to `AGENT_RULES.md`. Edit that one file and every agent picks up the change instantly.
-
-`ctx.config.json` also defines the context directory through `source`. By default this is `sample-context/AGENT_RULES.md`, but projects can point it at another directory such as `docs/context/AGENT_RULES.md`; `status`, `sync`, `export`, `generate`, `log`, and `timeline` will follow that context directory.
-
----
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `bash ctx.sh init` | Initialize context files + symlinks for a new project |
-| `bash ctx.sh status` | Show symlink status + project summary from MASTER_PLAN |
-| `bash ctx.sh sync` | Rebuild symlinks + auto-update Last Updated date |
-| `bash ctx.sh export` | Print full context for web LLMs (Claude.ai, ChatGPT, etc.) |
-| `bash ctx.sh generate <type>` | Collect configured source files into a generated context bundle |
-| `bash ctx.sh log --summary "..."` | Record a commit/work-unit summary in `<context>/work-log/timeline.jsonl` |
-| `bash ctx.sh timeline --limit 20` | Show recent work-log entries |
-| `bash ctx.sh backfill [--limit N]` | Backfill past Git commits into timeline.jsonl |
-| `bash ctx.sh archive [--keep N]` | Archive completed tasks, split old logs & archive deprecated ADRs |
-| `bash ctx.sh hook install` | Install Git pre-commit hook for auto-sync & auto-log |
-| `bash ctx.sh hook uninstall` | Remove Git pre-commit hook |
-| `bash ctx.sh hook status` | Show Git integration and context repository status |
-| `bash ctx.sh list` | List all agents and their enabled status |
-| `bash ctx.sh enable <n>` | Enable a specific agent |
-| `bash ctx.sh disable <n>` | Disable a specific agent |
-| `bash ctx.sh help` | Show full help |
-
-> **Windows Users**: You can use `ctx.cmd` directly (e.g. `ctx status`, `ctx log`, `ctx hook install`, `ctx archive`) from CMD or PowerShell!
-
----
-
-## 3-Tier Hierarchical Context & Archiving (Prevent Context Bloat)
-
-As projects grow, completed tasks and hundreds of commit logs accumulate, causing **context window bloat, token waste, and AI distraction**. `ctx-kit` provides a **3-tier hierarchical context structure**:
-
-```text
-your-project/
-└── .ctx-local/ (or sample-context/)
-    ├── AGENT_RULES.md         ← [Hot] Loaded every session (Rules)
-    ├── MASTER_PLAN.md         ← [Hot] Active tasks & next actions only
-    ├── decisions.md           ← [Hot] Current active architecture decisions
-    ├── backlog.md             ← [Hot] Ideas and open questions
-    ├── work-log/
-    │   ├── timeline.jsonl     ← [Hot] Recent 20~30 work unit logs
-    │   └── timeline-digest.md ← [Warm] Compressed milestone summary of past work
-    └── archive/               ← [Cold] Excluded from AI context loading!
-        ├── completed-tasks.md ← Completed [x] tasks moved from MASTER_PLAN
-        ├── decisions-deprecated.md ← Deprecated/superseded ADRs from decisions.md
-        └── timeline-YYYY-MM.jsonl ← Monthly partitioned historical logs
-```
-
-### Run Archiving with One Command
-```bash
-bash ctx.sh archive            # Keep top 30 logs, move completed tasks & deprecated ADRs to archive
-bash ctx.sh archive --keep 20  # Keep top 20 logs
-bash ctx.sh archive --no-decisions # Archive tasks and logs only
-```
-
-- **Tasks**: Completed `- [x]` items in `MASTER_PLAN.md` are moved to `archive/completed-tasks.md` under date headers, keeping your active plan slim and focused.
-- **Decisions**: Deprecated or superseded ADRs (`Status: Deprecated / Superseded` / `상태: 폐기됨 / 대체됨`) in `decisions.md` are moved to `archive/decisions-deprecated.md`.
-- **Logs**: Older entries in `timeline.jsonl` are split by month into `archive/timeline-YYYY-MM.jsonl`.
-- **Digest**: A compressed milestone summary is generated in `work-log/timeline-digest.md` so agents can understand past history without token waste.
-- **Token-Optimized Export**: `ctx export` automatically excludes the `archive/` folder to save 70~80% tokens (use `ctx export --all` to include cold archives).
-- **Auto Git Commit**: All archives are automatically committed to the local private context Git repository.
-
----
-
-## Git Sync & Auto-Log (Private Local Versioning)
-
-Manage private AI context without polluting public team commits or leaking private notes to remote repositories:
-
-1. **Zero Remote Leakage**: The context directory (e.g. `.ctx-local/` or `sample-context/`) is automatically added to `.gitignore`. Running `git push` will never push your private context.
-2. **Independent Local Git Tracking**: `ctx hook install` initializes an independent Git repository inside your context directory and installs a `pre-commit` hook.
-3. **Auto-Log Before Commit**: When `auto_log` is enabled in `ctx.config.json`, staged changes and diff statistics are automatically summarized and recorded into `timeline.jsonl` right before each `git commit`.
-4. **Historical Backfill**: Adopting `ctx-kit` in an existing project? Run `bash ctx.sh backfill --limit 30` to reconstruct past commits into `timeline.jsonl`.
-
-```json
-// ctx.config.json
-{
-  "source": ".ctx-local/AGENT_RULES.md",
-  "git_sync": {
-    "enabled": true,
-    "auto_log": true
-  }
-}
-```
-
-## File Structure
-
-```
-your-project/
-├── ctx.config.json              ← Agent path config
-├── CLAUDE.md                    → symlink → sample-context/AGENT_RULES.md
-├── AGENTS.md                    → symlink → sample-context/AGENT_RULES.md
-└── sample-context/
-    ├── AGENT_RULES.md           ← Agent behavior rules (edit only this)
-    ├── MASTER_PLAN.md           ← Current state + next actions
-    ├── decisions.md             ← Architecture decision records (ADR)
-    ├── backlog.md               ← Ideas + future tasks
-    ├── generated/                ← Output from ctx generate
-    ├── work-log/
-    │   └── timeline.jsonl        ← Append-only work-unit timeline
-    └── visuals/                 ← Mermaid diagrams, etc.
-```
-
----
-
-## Adding Agents
-
-Add an entry to `agent_rules` in `ctx.config.json`:
-
-```json
-{
-  "source": "sample-context/AGENT_RULES.md",
-  "generate": {
-    "project": {
-      "output": "sample-context/generated/project-raw.md",
-      "collect": [
-        "README.md",
-        "docs/**/*.md",
-        "src/**/*"
-      ]
-    }
-  },
-  "agent_rules": [
-    { "name": "Claude",      "path": "CLAUDE.md",                "enabled": true,  "_note": "Claude Code" },
-    { "name": "Codex",       "path": "AGENTS.md",                "enabled": true,  "_note": "OpenAI Codex (AGENTS.md spec)" },
-    { "name": "Antigravity", "path": "AGENTS.md",                "enabled": true,  "_note": "Google Antigravity (shares AGENTS.md with Codex)" },
-    { "name": "Cursor",      "path": ".cursor/rules/context.mdc", "enabled": true,  "_note": "Cursor IDE" },
-    { "name": "MyAgent",     "path": "MY_AGENT.md",              "enabled": false }
-  ]
-}
-```
-
-Then run:
-
-```bash
-bash ctx.sh sync
-```
-
-To enable or disable without editing the file:
-
-```bash
-bash ctx.sh enable Cursor
-bash ctx.sh disable Antigravity
-```
-
-Keep `name` short because it is used by `enable` and `disable`. Put longer tool notes in `_note`.
-
-When two agents share the same rule file (e.g. Codex and Antigravity both follow the AGENTS.md spec), list them as separate rows pointing to the same `path`. `sync` keeps the symlink as long as at least one of them is enabled.
-
-To collect more project-specific files, extend `generate.project.collect`:
-
-```json
-{
-  "generate": {
-    "project": {
-      "output": "sample-context/generated/project-raw.md",
-      "collect": [
-        "README.md",
-        "docs/**/*.md",
-        "src/**/*",
-        "app/**/*",
-        "server/**/*",
-        "web/src/**/*"
-      ]
-    }
-  }
-}
-```
-
----
-
-## Customizing AGENT_RULES.md
-
-`sample-context/AGENT_RULES.md` defines how agents behave. The default template includes:
-
-- **Session start protocol** — guides agents to read current state, decisions, the optional milestone digest, and backlog
-- **Auto-detect + record protocol** — asks before new decisions or scope/priority changes; records factual progress within an authorized task directly
-- **Session end protocol** — verifies changes, updates affected context, records through `ctx log`, and checks readback before reporting closure
-- **Absolute rules** — project-specific constraints
-
-Edit the `## 5. Project Context` section to match your project name, tech stack, and current phase.
-
-### Closing a work unit
-
-For work that changes project files (including documentation), the agent follows this sequence:
-
-1. Inspect the actual changes and run relevant checks. Report implementation, validation, commit, and merge status separately.
-2. Update `MASTER_PLAN.md` only when current state or next actions changed. Decisions and backlog updates still require applicable authorization; unchanged files stay untouched.
-3. Run `ctx log`, check its exit status, and read back the matching entry through `ctx timeline`. Include validation results and remaining issues in the summary; supply the relevant files explicitly.
-
-```bash
-bash ctx.sh log --summary "Updated documentation; checks passed; no open issues" --files "README.md" --type docs
+bash ctx.sh log --summary "Initialized ctx-kit demo; checked rule links" --files "sample-context/AGENT_RULES.md,sample-context/MASTER_PLAN.md"
 bash ctx.sh timeline --limit 1 --json
 ```
 
-If another writer added a newer entry, increase the read limit and find your own summary and files. If recording or verification fails, report the cause and mark logging as failed or unverified. Check for an existing entry before retrying, and use only an allowed recovery/approval path. Do not bypass the CLI by editing `timeline.jsonl` directly.
+The entry contains that summary and those file paths. Edit the generated project-name, stack, current-state, and next-action placeholders before using the context with an agent.
 
-Read-only analysis/review needs no context edits or work-log entry. Explicit allowed-file or no-logging restrictions take precedence; report skipped steps. An agent without filesystem/CLI access provides proposed updates and commands, marked as unapplied. These are agent instructions, not automatic enforcement by the CLI; the Git hook does not replace this closure procedure.
+## How the context fits together
 
-### Template paths and existing installations
-
-`init` renders document references using the context directory from `ctx.config.json` and CLI examples using the installed script location. For example, `source: "docs/context/AGENT_RULES.md"` and `scripts/ctx.sh` produce references to `docs/context/MASTER_PLAN.md` and commands starting with `bash scripts/ctx.sh`. Document paths are relative to the project root; run commands there.
-
-Existing rule files are skipped by `init`, and `sync` rebuilds links rather than upgrading their content (it also refreshes the plan's `Last Updated` date). To adopt these rules in an existing project:
-
-1. Back up the file identified by `source` in `ctx.config.json`.
-2. Compare it with this repository's `AGENT_RULES.md`. Merge the session-start, authorization, closure, and CLI guidance while preserving project-specific instructions and Project Context.
-3. Adapt document paths and CLI examples to your installation, then run `bash ctx.sh status` (or `bash scripts/ctx.sh status`). Check the source and enabled links, and verify the closure flow on your next authorized write task.
-
-Do not delete your context directory or replace customized rules wholesale to upgrade.
-
----
-
-## Context Files
-
-### MASTER_PLAN.md
-The starting point for every session. Tracks what's done, what's next, and open questions. The `Last Updated` date is automatically refreshed on every `ctx sync`.
-
-### decisions.md
-Records technical decisions in ADR (Architecture Decision Record) format — what was decided, why, and what was given up. Prevents relitigating the same choices with every new agent session.
-
-### backlog.md
-Captures ideas, future features, and open questions that aren't urgent but shouldn't be lost.
-
-### generated/
-Contains source bundles created by `ctx generate <type>`. Configure each type in `ctx.config.json` under `generate`.
-
-### work-log/
-Contains an append-only `timeline.jsonl` created by `ctx log`. Use it to track commit-level or work-unit summaries without depending on a specific AI session history.
-
-```bash
-bash ctx.sh log --summary "Implemented feedback MVP" --type work
-bash ctx.sh log --commit abc1234 --summary "Release cleanup" --type release
-bash ctx.sh timeline --limit 10
-bash ctx.sh timeline --json
+```text
+project/
+├── ctx.sh
+├── ctx.config.json
+├── CLAUDE.md ─────────────────┐
+├── AGENTS.md ─────────────────┼──> sample-context/AGENT_RULES.md
+├── .cursor/rules/context.mdc ─┘
+└── sample-context/
+    ├── MASTER_PLAN.md              current state and next actions
+    ├── decisions.md                architecture decisions and reasons
+    ├── backlog.md                  ideas and open questions
+    ├── work-log/timeline.jsonl      records created by log/backfill/hook
+    ├── work-log/timeline-digest.md  archived titles created by archive
+    └── archive/                    completed tasks, retired decisions, monthly logs
 ```
 
----
+The context directory comes from `source` in `ctx.config.json`. Plan and decision files are edited by you or an authorized agent. `sync` maintains links and refreshes the plan date; it does not infer progress or upgrade customized rule content.
 
-## Web-Based LLMs (Claude.ai, ChatGPT, Gemini)
+The rules ask agents to read current context at session start, update affected context after authorized changes, and verify their `log` entry at closure. These are instructions, not automatic enforcement. The [workflow guide](docs/en/workflows.md) covers the sequence and what the Git hook actually records.
 
-Web LLMs can't read files directly. Use `ctx export` to print your full context as text, then paste it into the chat:
+## Storage and sharing
 
-```bash
-bash ctx.sh export
-# Copy the output → paste into Claude.ai / ChatGPT
-```
+- **Existing rules are preserved.** `init`/`sync` report conflicts with ordinary files or unrelated links. They do not merge instructions for you. See [conflict recovery](docs/en/troubleshooting.md).
+- **Storage is local, but privacy needs configuration.** `--no-hook` also skips automatic Git exclusion. Hook installation adds or recognizes a context exclusion, but already tracked files remain tracked. Check [local Git exclusions](docs/en/getting-started.md#local-git-exclusions) before committing; generated links can otherwise point teammates at a missing private directory.
+- **Review text before sharing.** `generate` does not apply `.gitignore` or scan for secrets. `export --all` adds archived task/decision Markdown, not monthly log files. There is no fixed token-saving guarantee. See [export and collection](docs/en/workflows.md).
 
-When working in a web LLM, the agent will output file changes in this format for you to apply manually:
+Work-log writes use a shared lock and atomic file replacement. Archive records pending writes in a recovery journal before removing source content. Interrupted operations recover before the next context write; unexpected external edits cause an error instead of being overwritten. [Recovery details](docs/en/troubleshooting.md) explain how to preserve and inspect affected files.
 
-```
-📝 File update needed
-Add to sample-context/decisions.md:
----
-### ADR-NNN: ...
-...
----
-```
+## Commands
 
----
+Run commands from the project root. If installed under `scripts/`, use `bash scripts/ctx.sh` instead.
 
-## Supported Agents
+| Command | Purpose |
+| --- | --- |
+| `bash ctx.sh init --no-hook --no-backfill` | Create missing context templates and rule links |
+| `bash ctx.sh status` | Display the plan summary and link status |
+| `bash ctx.sh sync` | Check conflicts, maintain links, and refresh the plan date |
+| `bash ctx.sh list` | List configured agents |
+| `bash ctx.sh enable Cursor` / `disable Cursor` | Change an agent setting and run sync |
+| `bash ctx.sh log --summary "..."` | Record a work unit; `record` is an alias |
+| `bash ctx.sh timeline --limit 20` | Read active timeline entries |
+| `bash ctx.sh backfill --limit 30` | Import recent Git commits into the active timeline |
+| `bash ctx.sh archive --keep 30` | Archive completed tasks, retired decisions, and older logs |
+| `bash ctx.sh export` | Print selected context for review and manual sharing |
+| `bash ctx.sh generate project` | Combine files selected by `generate.project.collect` |
+| `bash ctx.sh hook install` | Opt into pre-commit logging and local context snapshots |
+| `bash ctx.sh hook status` / `hook uninstall` | Inspect or remove ctx-kit's hook integration |
+| `bash ctx.sh version` / `help` | Show the script version or command overview |
 
-Default configuration includes:
+Flags, verification commands, and limitations are in [Workflows](docs/en/workflows.md). `status` is a display command, not a CI health check: inspect its output and verify the actual link targets.
 
-| Agent | Rule file | Default |
-|-------|-----------|---------|
-| Claude (Claude Code) | `CLAUDE.md` | ✅ enabled |
-| Codex (OpenAI Codex) | `AGENTS.md` | ✅ enabled |
-| Antigravity (Google) | `AGENTS.md` (shared with Codex) | ✅ enabled |
-| Cursor | `.cursor/rules/context.mdc` | ✅ enabled |
+## Agent instruction files
 
-Any agent that reads a rule file from a fixed path can be added.
+The shipped configuration enables these paths. A linked file alone is not proof that an agent loaded or obeyed it.
 
----
+| Agent | Configured path | Loading notes |
+| --- | --- | --- |
+| Claude Code | `CLAUDE.md` | Kept for compatibility; newer versions also support `AGENTS.md` under documented conditions. [Official docs](https://code.claude.com/docs/en/memory) |
+| Codex | `AGENTS.md` | Guidance is discovered at startup; start a new session after changing instructions. [Official docs](https://learn.chatgpt.com/docs/agent-configuration/agents-md) |
+| Antigravity | `AGENTS.md` | Shares the configured path with Codex. [Official docs](https://antigravity.google/docs/rules) |
+| Cursor | `.cursor/rules/context.mdc` | The template has no MDC activation frontmatter. Cursor also supports the generated `AGENTS.md`; verify loading rather than assuming always-on MDC behavior. [Official docs](https://prod.cursor.com/docs/rules) |
 
-## Requirements
+Loading notes were checked against official documentation on 2026-10-24. For other agents, add a path to `agent_rules` and verify that tool's requirements. [Configuration](docs/en/configuration.md) explains shared paths and custom context directories.
 
-- bash (macOS / Linux)
-- python3 (for JSON parsing)
+## Related tools
 
----
+| Need | Starting point |
+| --- | --- |
+| Generate or import configuration across many coding tools | [Rulesync](https://github.com/dyoshikawa/rulesync) |
+| Distribute centralized and directory-scoped agent rules | [Ruler](https://github.com/intellectronica/ruler) |
+| Package repository content with token reporting and security checks | [Repomix](https://repomix.com/guide/) |
+| Keep a small, editable record of decisions, work units, and next actions across sessions | ctx-kit |
 
-## Reuse Across Projects
+## Documentation
 
-```bash
-# Clone once
-git clone https://github.com/nemory-dev/ctx-kit.git ~/ctx-kit
+| Guide | What you can do |
+| --- | --- |
+| [Getting started](docs/en/getting-started.md) | Install in new or existing projects, use `scripts/` or Windows, verify setup |
+| [Configuration](docs/en/configuration.md) | Set paths, agents, collection rules, and Git options |
+| [Workflows](docs/en/workflows.md) | Start and close work, inspect logs, archive, share, and update an installation |
+| [Troubleshooting](docs/en/troubleshooting.md) | Resolve conflicts, loading problems, Git limitations, and interrupted writes |
 
-# For each new project
-cp ~/ctx-kit/ctx.sh /new/project/
-cp ~/ctx-kit/ctx.config.json /new/project/
-cd /new/project && bash ctx.sh init
-```
-
-Or add an alias:
-
-```bash
-# Add to ~/.zshrc or ~/.bashrc
-alias ctx-setup='cp ~/ctx-kit/ctx.sh . && cp ~/ctx-kit/ctx.config.json . && bash ctx.sh init'
-```
-
----
+Each guide links its Korean counterpart at the top. These documents describe the source in this checkout; use documentation and `ctx.sh` from the same revision.
 
 ## Development checks
 
@@ -369,11 +130,9 @@ python3 -B -m unittest discover -s tests -v
 git diff --check
 ```
 
-Tests run in temporary projects and cover standalone/default initialization, custom context paths, `scripts/` commands, preservation of customized context, and successful/failed log recording. They do not run an AI model or verify that an agent obeys the instructions.
+Tests use temporary projects to cover initialization, rule preservation, recording, concurrent writers, archive failures, and recovery. They do not run AI models or prove instruction compliance. Windows execution has not been verified in the current macOS test environment.
 
-Keep the root `AGENT_RULES.md` and the embedded rules in `ctx.sh`'s `cmd_init` in sync. The embedded copy preserves installation by copying only `ctx.sh` and configuration; the tests compare generated rules with the root template to catch drift.
-
----
+Keep the root `AGENT_RULES.md` and the embedded template in `ctx.sh` aligned. The embedded copy lets users install by copying only the script and configuration; initialization tests check for drift.
 
 ## License
 
