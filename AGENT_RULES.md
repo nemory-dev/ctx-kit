@@ -31,7 +31,11 @@ Related ADRs:  {relevant decisions, or "none"}
 
 ## 2. Auto-Detect + Record Protocol
 
-During conversation, stop and ask the user whenever a trigger is detected.
+Ask before adopting new decisions, changing scope or priorities, or adding backlog
+items unless the user has already authorized that action. Factual progress updates
+within an authorized task follow Trigger B and the session end protocol directly.
+Explicit user restrictions, including read-only requests and allowed-file limits,
+take precedence over these recording rules.
 
 ### Trigger A: Technical Decision
 Detect: new library, architecture change, tech stack selection, reverting a decision
@@ -48,7 +52,12 @@ yes → Add ADR to decisions.md, update MASTER_PLAN.md decision summary
 ---
 
 ### Trigger B: Task Status Change
-Detect: task completed, plan changed, task added/removed/reprioritized
+Detect: progress or completion of an authorized task, plan changed, task added/removed/reprioritized
+
+For factual progress or completion within the authorized scope, update only the
+affected Current State and Next Actions in MASTER_PLAN.md without asking again.
+If neither changed, leave the file unchanged. For new scope or priority changes
+that have not been authorized, ask first:
 
 ```
 [Status Change] Update MASTER_PLAN.md?
@@ -85,12 +94,39 @@ Keep / Change? (update ADR if changed)
 
 ## 3. Session End Protocol
 
-After completing work, always output:
+For each completed work unit that changes project files, including documentation:
+
+1. Verify the actual changes and run relevant available checks. Distinguish work
+   implemented, checks passed, committed, and merged; do not infer one from another.
+2. Update MASTER_PLAN.md only if the current state or next actions changed, following
+   Trigger B. Update decisions.md or backlog.md only when applicable and authorized.
+3. Record the work through the CLI, using the actual summary and relevant file paths:
+
+   ```bash
+   bash ctx.sh log --summary "What changed; validation results; remaining issues" --files "path/to/file"
+   bash ctx.sh timeline --limit 1 --json
+   ```
+
+   Check that `log` succeeded and that readback contains this work unit's summary
+   and files. If another writer added a newer entry, increase the read limit to
+   locate your entry. An existing file or JSONL row alone is not proof of success.
+4. If recording or readback fails, report the cause and mark logging as failed or
+   unverified. Do not directly create or edit timeline.jsonl to bypass the CLI.
+   Check for an existing entry before retrying; use an allowed recovery or approval
+   path, or leave recording pending when no such path is available.
+
+Read-only analysis/review does not require context edits or a work-log entry.
+Respect explicit no-logging and allowed-file restrictions; report any skipped
+closure steps instead of expanding the scope. Without filesystem or CLI access,
+provide proposed updates and commands for the user and mark them as unapplied.
+
+Then output a summary (also for read-only tasks):
 
 ```
 [Session Summary]
 ✅ Done:          {completed items}
-📝 Files changed: {modified context files}
+📝 Files changed: {modified project and context files, or "none"}
+📚 Work log:      {recorded / skipped with reason / failed / unverified}
 ⏭️ Next action:   {next priority from MASTER_PLAN}
 🔖 Open items:    {issues for next session}
 ```
@@ -104,6 +140,7 @@ After completing work, always output:
 ✗ Do not restructure MASTER_PLAN.md without user confirmation
 ✗ Do not make tech choices without explaining tradeoffs
 ✓ Follow existing architecture patterns when adding new modules
+✗ Do not commit or push unless the user requests it
 ```
 
 ---
@@ -133,6 +170,9 @@ bash ctx.sh export            # Print context for web LLM
 bash ctx.sh enable Cursor     # Enable Cursor
 bash ctx.sh disable Cursor    # Disable Cursor
 bash ctx.sh list              # List agents
+bash ctx.sh generate project  # Collect configured source files
+bash ctx.sh log --summary "..."  # Record a work-unit
+bash ctx.sh timeline --limit 20  # Show recent work-units
 ```
 
 To add a new agent: add an entry to `agent_rules` in `ctx.config.json` → `bash ctx.sh sync`
