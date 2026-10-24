@@ -2,7 +2,7 @@
 
 Keep project decisions, progress, and next actions available when you switch AI coding agents.
 
-[한국어](README.ko.md) · [Getting started](docs/en/getting-started.md) · [Configuration](docs/en/configuration.md) · [Workflows](docs/en/workflows.md) · [Troubleshooting](docs/en/troubleshooting.md)
+[한국어](README.ko.md) · [Getting started](docs/en/getting-started.md) · [Configuration](docs/en/configuration.md) · [Workflows](docs/en/workflows.md) · [Troubleshooting](docs/en/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
 
 ctx-kit is a small Bash CLI backed by Python's standard library. It creates editable project context, links instruction-file paths to one rules file, and records work units in a local JSONL timeline. It makes no LLM API calls and needs no API key or hosted service.
 
@@ -10,7 +10,7 @@ Use it when a new session needs to know **what was decided, what changed, what w
 
 ## Quick start
 
-Requires Bash, Python 3.7 or later, and standard Unix tools. Git is needed to clone this repository and use Git integration. Current checks run on macOS Apple Silicon with Bash 3.2 and Python 3.11. Windows needs Git Bash, Python, and symlink creation permission; see [Windows installation](docs/en/getting-started.md#windows).
+Requires Bash, Python 3.7 or later, and standard Unix tools. Git is needed to clone this repository and use Git integration. CI runs on Linux and macOS with Python 3.11; macOS verification includes Apple Silicon and Bash 3.2. Windows needs Git Bash, Python, and symlink creation permission; see [Windows installation](docs/en/getting-started.md#windows).
 
 Try a **new demo directory** first. Run this from a directory without an existing `ctx-kit` or `ctx-demo`:
 
@@ -117,10 +117,11 @@ Loading notes were checked against official documentation on 2026-10-24. For oth
 | [Configuration](docs/en/configuration.md) | Set paths, agents, collection rules, and Git options |
 | [Workflows](docs/en/workflows.md) | Start and close work, inspect logs, archive, share, and update an installation |
 | [Troubleshooting](docs/en/troubleshooting.md) | Resolve conflicts, loading problems, Git limitations, and interrupted writes |
+| [Contributing](CONTRIBUTING.md) | Validate locally, open a PR, satisfy required CI, merge, and verify the main push |
 
 Each guide links its Korean counterpart at the top. These documents describe the source in this checkout; use documentation and `ctx.sh` from the same revision.
 
-## Development checks
+## Development and contribution
 
 No additional test dependencies are required:
 
@@ -133,6 +134,17 @@ git diff --check
 Tests use temporary projects to cover initialization, rule preservation, recording, concurrent writers, archive failures, and recovery. They do not run AI models or prove instruction compliance. Windows execution has not been verified in the current macOS test environment.
 
 Keep the root `AGENT_RULES.md` and the embedded template in `ctx.sh` aligned. The embedded copy lets users install by copying only the script and configuration; initialization tests check for drift.
+
+[CI](.github/workflows/ci.yml) runs the Bash syntax check and full unittest command above on every PR and `main` push, including documentation changes. Each run uses Python 3.11 on `ubuntu-latest` and `macos-latest`.
+
+Changes to this repository's `main` must go through a PR, including administrator changes. Both GitHub Actions checks are required:
+
+- `Regression tests (ubuntu-latest)`
+- `Regression tests (macos-latest)`
+
+The PR must include the latest `main` changes. Force pushes and deletion of `main` are disabled. Required approving reviews are set to **0**; the PR and both CI results remain mandatory. These protection settings live in GitHub and are configured separately from the workflow file.
+
+Use a work branch, run local checks, push only reviewed files, and open a PR targeting `main`. Verify both required checks before merging and the separate `main` push CI afterward. [The contribution guide](CONTRIBUTING.md) provides commands for this flow, forks, updating an outdated PR, and branch cleanup.
 
 ## License
 
