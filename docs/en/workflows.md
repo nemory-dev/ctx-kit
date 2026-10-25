@@ -191,7 +191,11 @@ The terminal output includes the following, with color formatting omitted here:
 
 Open `sample-context/generated/project-raw.md` and verify its `## [README.md]` and `## [docs/architecture.md]` sections and contents before sharing. The command concatenates matching files with headings; it does not summarize them. Paths are relative to the project root, and recursive glob patterns are supported. Overlapping patterns can include a file more than once.
 
-Collection does not honor `.gitignore` as a filter and performs no secret or binary scan. Review patterns and output yourself, especially before replacing exact paths with broad globs. Keep the output outside the collected inputs. A missing configured type or output is an error; when no files match, the command reports it and removes the generated output file.
+Input patterns are expanded before writing. The output and its symlink or hard-link aliases are excluded, and other matching files are collected. A missing configured type or output is an error. If no inputs remain, the command reports an error on stderr and exits nonzero without changing an existing output or creating a new one.
+
+Successful collection replaces the output atomically and preserves its existing permissions. Errors before replacement leave the output untouched by this run. A detected output change before replacement also stops the command; concurrent writers are not locked. The final output cannot be a symlink, including a broken link, or another non-regular entry such as a directory or FIFO; the command rejects it without changing the entry or its target. See [Troubleshooting](troubleshooting.md#generate-fails-or-export-is-incomplete).
+
+Collection does not honor `.gitignore` as a filter and performs no secret or binary scan. Review patterns and output yourself, especially before replacing exact paths with broad globs. Output exclusion does not filter other private files or deduplicate overlapping patterns.
 
 ## Opt in to local Git snapshots and pre-commit logs
 

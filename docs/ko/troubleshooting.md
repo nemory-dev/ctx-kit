@@ -248,14 +248,39 @@ PY
 
 `.ctx-write-*`는 원자적 파일 교체를 위한 내부 임시 파일이며 사용자 설정이 아닙니다. 정상 쓰기는 이를 정리하지만 갑작스러운 종료 후에는 남을 수 있습니다. 진단 중 보존하세요. CLI의 로컬 Git 커밋 헬퍼는 이 파일, 잠금, 저널을 제외하지만 수동 `git add`까지 막지는 않습니다. 두 저장소 모두에서 runtime 파일의 staging 여부를 확인하세요.
 
-## `generate`·`export`가 종료 코드 0인데 불완전할 때
+## `generate`가 실패하거나 `export`가 불완전할 때
 
 | 증상 | 원인 | 조치와 검증 |
 | --- | --- | --- |
-| `No files matched`가 나오고 출력 파일이 없음 | `collect`와 일치하는 파일이 없습니다. 이때 `generate`는 출력 파일을 지우고도 종료 코드 0을 반환할 수 있으며, 같은 출력 경로의 기존 파일도 지워질 수 있습니다. | 중요한 출력은 재실행 전에 백업하세요. 프로젝트 기준 패턴을 고치고 출력 파일 존재와 의도한 섹션을 확인하세요. |
-| 예상 밖 데이터, 중간 실패, 출력 파일 자체가 수집됨 | 파일 시스템 glob으로 찾은 파일을 이어 붙입니다. Git ignore 규칙, 바이너리·비공개 파일 제외, 출력 파일 자동 제외를 적용하지 않습니다. | 검토한 명시적 `collect` 목록을 권장합니다. 출력이 모든 수집 패턴 밖에 있도록 하고 수집 경로와 결과를 로컬에서 확인하세요. 외부 공유 전에 인증 정보, 비공개 컨텍스트, 대용량·바이너리 파일을 제외하세요. |
+| `No input files remain after excluding the output`와 종료 코드 1 | `collect`에서 일치한 파일 중 출력과 같은 실제 경로·inode의 별칭을 제외하니 남은 입력이 없습니다. 기존 출력은 보존하며, 출력이 없었다면 만들지 않습니다. | 프로젝트 기준 패턴에 출력 외의 의도한 입력이 하나 이상 포함되도록 고치고 `bash ctx.sh generate project`를 다시 실행한 뒤 섹션을 확인하세요. 실패 후 남은 기존 출력은 새로 생성된 번들이 아닙니다. |
+| `Output must be a regular file, not a symlink or other file type` | `generate`는 끊어진 링크를 포함한 심볼릭 링크·디렉터리·FIFO 등 일반 파일이 아닌 출력을 거부하며, 항목과 연결 대상을 변경하지 않습니다. | 아래 진단으로 설정 경로를 확인하세요. 기존 항목을 보존하고 아직 사용하지 않는 출력 경로나 의도적으로 교체할 일반 파일을 선택하세요. |
+| 입력 읽기·출력 쓰기·교체 실패 | 권한이나 I/O 오류로 교체하지 못했습니다. 이 실행은 출력을 변경하지 않고 자체 임시 파일을 정리합니다. | 오류에 나온 입력·출력 경로, 출력 디렉터리 권한, 남은 저장 공간을 확인하고 원인을 해결한 뒤 다시 실행하세요. 교체에는 출력 디렉터리 쓰기 권한이 필요합니다. 프로젝트 전체를 누구나 쓸 수 있게 바꾸지 마세요. |
+| `Output changed during generation; preserving it` | 최초 확인 후 교체 직전까지 출력이 변경되어, 이 실행은 출력을 교체하지 않고 중단합니다. 다른 작성자의 동시 쓰기를 잠그지는 않습니다. | 현재 출력을 확인하고 보존한 뒤 다른 작성자의 쓰기를 마치거나 중단하고 다시 실행하세요. |
+| 생성 결과에 예상 밖 데이터가 있음 | 파일 시스템 glob으로 찾은 파일을 이어 붙입니다. Git ignore 규칙이나 바이너리·비공개 파일 제외는 적용하지 않으며 출력과 그 별칭만 자동 제외합니다. | 검토한 명시적 `collect` 목록을 권장합니다. 수집 경로와 결과를 로컬에서 확인하고 외부 공유 전에 인증 정보, 비공개 컨텍스트, 대용량·바이너리 파일을 제외하세요. |
 | `export --all`에 보관된 타임라인이 빠짐 | `--all`은 완료 작업과 폐기된 결정의 아카이브를 추가하지만 월별 `archive/timeline-*.jsonl`은 포함하지 않습니다. | 전체 이력이 필요하면 해당 파일을 따로 확인하세요. `timeline`도 hot 로그만 읽습니다. |
 | export가 성공했지만 최근 작업이 빠짐 | export는 `timeline` 오류를 숨기고 해당 섹션이 실패해도 종료 코드 0을 반환할 수 있습니다. | `bash ctx.sh timeline --limit 20 --json`을 직접 실행하고 위 JSONL 진단으로 검증한 뒤 export를 신뢰하세요. |
+
+프로젝트 루트에서 최종 심볼릭 링크를 따라가지 않고 `project`의 출력 설정을 확인합니다.
+
+```bash
+python3 - <<'PY'
+import json
+import os
+import stat
+from pathlib import Path
+
+config = json.loads(Path("ctx.config.json").read_text(encoding="utf-8"))
+output = Path(config["generate"]["project"]["output"])
+print("output:", output)
+print("parent:", output.parent)
+if os.path.lexists(output):
+    print("entry type and permissions:", stat.filemode(output.lstat().st_mode))
+else:
+    print("output does not exist")
+PY
+```
+
+첫 글자는 일반 파일이면 `-`, 심볼릭 링크면 `l`, 디렉터리면 `d`, FIFO면 `p`입니다. 다른 타입을 진단할 때는 코드의 `project`를 바꾸세요. `scripts/ctx.sh` 설치라면 `bash scripts/ctx.sh generate project`로 다시 실행합니다.
 
 생성·내보내기 결과에서 민감 정보가 자동 필터링된다고 생각하지 마세요. 외부 LLM에 붙여 넣기 전에 확인하세요.
 
