@@ -6,12 +6,14 @@
 
 ## 전제 조건과 경로 규칙
 
-- [시작하기](getting-started.md)에 따라 `ctx.sh`와 `ctx.config.json`을 설치합니다. Bash와 Python 3이 필요하며, Git 연동에는 Git이 필요합니다.
+- [시작하기](getting-started.md)에 따라 `ctx.sh`와 `ctx.config.json`을 설치합니다. Bash와 Python 3.7 이상이 필요하며, Git 연동에는 Git이 필요합니다. CLI는 `PATH`의 `python3`, `python`, `py -3` 순으로 검증하여 실제 실행과 최소 버전 검사를 통과한 첫 후보를 사용합니다. 유지보수 중인 Python 3 버전을 권장합니다.
 - `ctx.config.json`은 프로젝트 루트에 둡니다. 스크립트는 `ctx.sh` 또는 `scripts/ctx.sh`에 둡니다. 스크립트가 `scripts`라는 디렉터리에 있으면 그 상위 디렉터리를 프로젝트 루트로 사용하고, 그 외에는 스크립트가 있는 디렉터리를 루트로 사용합니다.
 - 예제 명령어는 프로젝트 루트에서 실행합니다. `scripts/ctx.sh`로 설치했다면 `bash ctx.sh`를 `bash scripts/ctx.sh`로 바꿉니다.
 - JSON에는 주석이나 마지막 항목 뒤의 쉼표를 넣지 않습니다. 따옴표로 감싼 문자열 대신 JSON 불리언(`true`, `false`)을 사용합니다.
-- `source`, 에이전트 `path`, `output`, `collect`에는 단순한 프로젝트 상대 경로를 사용합니다. 절대 경로, `..`, 심볼릭 링크인 상위 디렉터리는 피합니다. 이 설정들은 경로를 지정하며, 접근 범위를 격리하는 샌드박스는 아닙니다.
+- `source`, 에이전트 `path`, `output`, `collect`에는 프로젝트 상대 경로를 사용합니다. 이 경로들과 프로젝트·Python 실행 파일 경로에는 공백, 한글 등 유니코드, 작은따옴표를 사용할 수 있습니다. 절대 경로, `..`, 심볼릭 링크인 상위 디렉터리는 피합니다. 이 설정들은 경로를 지정하며, 접근 범위를 격리하는 샌드박스는 아닙니다.
 - 컨텍스트 문서는 일반 UTF-8 Markdown(`.md`)으로 유지합니다. 설정한 소스와 에이전트 대상은 서로 다른 파일시스템 항목이어야 합니다.
+
+셸 경로는 자리표시자를 실제 경로로 바꾼 `bash "/path/to/팀's project/ctx.sh" status`처럼 큰따옴표로 감싸세요. JSON의 `"source": "팀's context/AGENT_RULES.md"` 같은 필드에서는 작은따옴표를 이스케이프할 필요가 없습니다. `generate.<type>.output`의 앞부분도 컨텍스트 위치에 맞추세요. 독립적인 Python 예제는 `python3`를 사용하므로 필요하면 유효한 `python`이나 `py -3` 후보로 바꾸세요.
 
 ## 전체 예제
 

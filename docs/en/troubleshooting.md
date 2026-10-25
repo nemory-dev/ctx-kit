@@ -21,21 +21,27 @@ Use a private local destination; copy only files that exist if initialization is
 
 | Symptom | Cause | Safe repair and verification |
 | --- | --- | --- |
-| `Error: python3 is required.` or a Python syntax/attribute error | Python is missing, resolves to Python 2, or is too old. The script can fall back to a `python` executable, but does not validate its version. | The syntax/runtime baseline is **Python 3.7+** because `backfill` uses `datetime.fromisoformat`; prefer a maintained Python 3 release. Check the executable in the same shell below. |
+| `Error: Python 3.7 or newer is required.` | None of the `PATH` candidates `python3`, `python`, or `py -3` can run and pass the version probe. A candidate can be missing, unlaunchable, or too old. | Install a maintained Python 3 release or expose an existing installation on `PATH` in the same shell. Candidates are checked in order, and invalid candidates are skipped. Use the diagnostics below before retrying. |
 | `git: command not found` or Git integration fails | Git is unavailable in that shell. Some commands suppress Git errors, so an empty Git field is not proof that Git works. | Check `command -v git` and `git --version`; make your existing Git executable available through `PATH` before retrying Git features. |
 | `bash: ctx.sh: No such file or directory` | Wrong invocation path, or the CLI was copied to another directory. | Keep `ctx.sh` at the project root or in a directory named exactly `scripts`, then invoke that path. The standalone file includes its storage helpers; copying only `ctx.sh` is supported. |
 
 ```bash
 command -v python3
-python3 --version
+python3 -c "import sys; print(sys.executable); print(sys.version); sys.exit(sys.version_info < (3, 7))"
 command -v python
-python --version
+python -c "import sys; print(sys.executable); print(sys.version); sys.exit(sys.version_info < (3, 7))"
+command -v py
+py -3 -c "import sys; print(sys.executable); print(sys.version); sys.exit(sys.version_info < (3, 7))"
 command -v git
 git --version
 bash --version
 ```
 
-A missing optional executable can make its individual diagnostic return nonzero. The regression suite is verified on macOS with Bash 3.2 and Python 3.11.8; actual Windows execution has not been verified here. The Python 3.7 baseline is not a claim that the suite was run on every later version.
+A missing or unlaunchable candidate returns nonzero; the version probes also return nonzero for Python older than 3.7. These failures are expected when another candidate is usable. The CLI selects the first passing candidate and uses it throughout the command. If all candidates fail, it explains the requirement and exits nonzero. `init` performs this check before creating configuration or context files; `help` and `version` work without Python.
+
+For an installed Python outside `PATH`, add its executable's directory in the shell that runs ctx-kit, for example `export PATH="/path/to/Python directory:$PATH"` after replacing the placeholder. Keep the double quotes for spaces or apostrophes. If every candidate is too old, install a maintained Python 3 release and update `PATH`; the minimum remains 3.7. The CLI searches only these `PATH` candidates and has no private runtime fallback.
+
+The standalone Python examples below use `python3`; substitute your passing `python` or `py -3` command if needed. The regression suite is verified on macOS with Bash 3.2 and Python 3.11.8; actual Windows execution has not been verified here. CI runs with Python 3.11 on Linux and macOS. The Python 3.7 baseline is not a claim that the suite was run on every later version.
 
 ## Missing or malformed configuration
 
@@ -51,7 +57,7 @@ python3 -m json.tool ctx.config.json >/dev/null
 
 `init` derives the context directory from `source`, but creates the rules template with the fixed basename `AGENT_RULES.md`. A custom directory such as `.ctx-local/AGENT_RULES.md` works; setting `source` to `.ctx-local/team-rules.md` does not make `init` create that filename. Either use the supported basename or deliberately prepare your existing source before `sync`.
 
-Project paths or collected filenames containing a single quote can trigger Python syntax errors because some CLI commands interpolate paths into inline Python strings. Shell quoting alone does not fix this existing limitation. Preserve the original project and use a simple path without quote characters, then verify the configuration and links there. Ordinary spaces in a custom context directory are covered by initialization tests.
+Project and interpreter paths, configured context and agent paths, and collected filenames support spaces, Unicode, and apostrophes. Quote shell paths with double quotes, for example `bash "/path/to/team's project/ctx.sh" status`. In JSON, use ordinary double-quoted strings, such as `"source": "team's context/AGENT_RULES.md"`; an apostrophe needs no JSON escape. Check quoting and the actual configured paths when diagnosing a missing file. If an older copied CLI still reports a Python syntax error for such a path, update `ctx.sh` and use documentation from the same revision.
 
 ## Rules conflict, are missing, or point to the wrong source
 
@@ -257,6 +263,6 @@ Do not treat generated or exported output as a secret-filtered bundle. Review it
 
 Copy `ctx.cmd` **beside** `ctx.sh`. Use `ctx.cmd` in Command Prompt, `./ctx.cmd` or `.\ctx.cmd` in PowerShell, or `bash ctx.sh` in Git Bash. For a `scripts/` installation, keep both files there and invoke `.\scripts\ctx.cmd` from PowerShell; configuration remains at the parent project root.
 
-`[Error] Git Bash is required to run ctx on Windows.` means the wrapper did not find Git Bash in its checked locations. Git Bash and a suitable Python executable must be available to the wrapper's shell, not just to a different terminal. The hard-coded Python fallback in `ctx.sh` is machine-specific and is not a portable installation method.
+`[Error] Git Bash is required to run ctx on Windows.` means the wrapper did not find Git Bash in its checked locations. Git Bash and a suitable Python executable must be available to the wrapper's shell, not just to a different terminal. In Git Bash, run the Python diagnostics above: the CLI checks `python3`, `python`, then `py -3`, and only accepts a candidate that runs Python 3.7+. Configure `PATH` for your installation; the CLI does not search private runtime locations.
 
 Symlink creation also requires Windows support and sufficient privileges, commonly provided through Developer Mode or an appropriately authorized shell. If `ln -s` fails, check that environment before retrying. Git may check out symlinks as ordinary text files when symlink support is disabled; inspect the actual file type and content before running `sync`, which preserves a conflicting regular file. These are compatibility requirements; an actual Windows end-to-end run has not been verified here.

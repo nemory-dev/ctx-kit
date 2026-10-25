@@ -6,12 +6,14 @@ Use `ctx.config.json` to choose the shared rules file, register agent rule paths
 
 ## Prerequisites and path rules
 
-- Install `ctx.sh` and `ctx.config.json` as described in [Getting started](getting-started.md). You need Bash and Python 3; Git is needed for Git integration.
+- Install `ctx.sh` and `ctx.config.json` as described in [Getting started](getting-started.md). You need Bash and Python 3.7+; Git is needed for Git integration. The CLI validates `python3`, `python`, then `py -3` on `PATH` and uses the first runnable candidate meeting that minimum. Prefer a maintained Python 3 release.
 - Keep `ctx.config.json` at the project root. Place the script at either `ctx.sh` or `scripts/ctx.sh`. When the script is in a directory named `scripts`, its parent is the project root; otherwise, its own directory is the root.
 - Run the examples from the project root. For a `scripts/ctx.sh` installation, replace `bash ctx.sh` with `bash scripts/ctx.sh`.
 - Write JSON without comments or trailing commas. Use JSON booleans (`true` and `false`), not quoted strings.
-- Use simple project-relative paths for `source`, agent `path`, `output`, and `collect`. Avoid absolute paths, `..`, and symlinked parent directories. These options are configuration paths, not a sandbox.
+- Use project-relative paths for `source`, agent `path`, `output`, and `collect`. Spaces, Unicode, and apostrophes are supported in these paths, the project path, and the Python executable path. Avoid absolute paths, `..`, and symlinked parent directories. These options are configuration paths, not a sandbox.
 - Keep context documents as plain UTF-8 Markdown (`.md`). The configured source and agent target must be different filesystem entries.
+
+Use double quotes for shell paths, for example `bash "/path/to/팀's project/ctx.sh" status` after replacing the placeholder. In JSON, a field such as `"source": "팀's context/AGENT_RULES.md"` needs no escape for its apostrophe. Keep any `generate.<type>.output` prefix aligned with your context location. The standalone Python examples use `python3`; substitute your valid `python` or `py -3` candidate if needed.
 
 ## Complete example
 

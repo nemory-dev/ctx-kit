@@ -21,21 +21,27 @@ printf 'Private backup: %s\n' "$ctx_backup"
 
 | 증상 | 원인 | 안전한 조치와 검증 |
 | --- | --- | --- |
-| `Error: python3 is required.` 또는 Python 문법·속성 오류 | Python이 없거나 Python 2 또는 너무 오래된 버전으로 실행됩니다. 스크립트는 `python` 실행 파일로 대체할 수 있지만 버전을 검증하지 않습니다. | `backfill`이 `datetime.fromisoformat`을 사용하므로 문법·런타임 기준은 **Python 3.7 이상**입니다. 유지보수 중인 Python 3 버전을 권장합니다. 아래 명령으로 같은 셸의 실행 파일을 확인하세요. |
+| `Error: Python 3.7 or newer is required.` | `PATH`의 `python3`, `python`, `py -3` 후보 중 실제 실행과 버전 검사를 모두 통과하는 후보가 없습니다. 후보가 없거나 실행할 수 없거나 너무 오래되었을 수 있습니다. | 유지보수 중인 Python 3를 설치하거나 같은 셸의 `PATH`에서 기존 설치를 찾을 수 있게 하세요. 후보는 순서대로 검사하며 부적합한 후보는 건너뜁니다. 재시도 전에 아래 진단을 실행하세요. |
 | `git: command not found` 또는 Git 연동 실패 | 해당 셸에서 Git을 찾지 못합니다. 일부 명령은 Git 오류를 숨기므로 Git 관련 필드가 비어 있다는 것만으로 정상 여부를 판단할 수 없습니다. | `command -v git`, `git --version`을 확인하고 기존 Git 실행 파일을 `PATH`에서 찾을 수 있게 한 뒤 Git 기능을 재시도하세요. |
 | `bash: ctx.sh: No such file or directory` | 실행 경로가 틀리거나 CLI를 다른 디렉터리에 복사했습니다. | `ctx.sh`를 프로젝트 루트 또는 이름이 정확히 `scripts`인 디렉터리에 두고 해당 경로로 실행하세요. 저장소 쓰기 헬퍼가 포함되어 있어 `ctx.sh` 한 파일만 복사해도 동작합니다. |
 
 ```bash
 command -v python3
-python3 --version
+python3 -c "import sys; print(sys.executable); print(sys.version); sys.exit(sys.version_info < (3, 7))"
 command -v python
-python --version
+python -c "import sys; print(sys.executable); print(sys.version); sys.exit(sys.version_info < (3, 7))"
+command -v py
+py -3 -c "import sys; print(sys.executable); print(sys.version); sys.exit(sys.version_info < (3, 7))"
 command -v git
 git --version
 bash --version
 ```
 
-선택적인 실행 파일이 없으면 해당 진단 명령이 0이 아닌 코드로 종료될 수 있습니다. 회귀 테스트는 macOS의 Bash 3.2, Python 3.11.8 환경에서 검증하며, 여기서 실제 Windows 실행을 검증하지는 않았습니다. Python 3.7 기준이 이후 모든 버전에서 테스트했다는 뜻은 아닙니다.
+후보가 없거나 실행할 수 없으면 해당 진단은 0이 아닌 코드로 종료됩니다. 위 버전 진단도 Python 3.7 미만이면 0이 아닌 코드를 반환합니다. 다른 후보를 사용할 수 있다면 이런 실패는 정상입니다. CLI는 처음 통과한 후보를 선택하여 해당 명령 전체에 사용합니다. 모두 실패하면 요구 사항을 설명하고 0이 아닌 코드로 종료합니다. `init`은 설정이나 컨텍스트 파일을 생성하기 전에 검사하며, `help`와 `version`은 Python 없이 사용할 수 있습니다.
+
+설치된 Python이 `PATH` 밖에 있다면 ctx-kit을 실행하는 셸에서 실행 파일이 있는 디렉터리를 추가하세요. 예를 들어 자리표시자를 실제 경로로 바꾼 `export PATH="/path/to/Python directory:$PATH"`를 사용할 수 있습니다. 공백이나 작은따옴표가 있으면 큰따옴표를 유지하세요. 모든 후보가 너무 오래되었다면 유지보수 중인 Python 3를 설치하고 `PATH`를 갱신하세요. 최소 버전은 3.7입니다. CLI는 이 `PATH` 후보만 탐색하며 개인 런타임 대체 경로는 없습니다.
+
+아래 독립적인 Python 예제는 `python3`를 사용하므로 필요하면 통과한 `python`이나 `py -3` 명령으로 바꾸세요. 회귀 테스트는 macOS의 Bash 3.2, Python 3.11.8 환경에서 검증하며, 여기서 실제 Windows 실행을 검증하지는 않았습니다. CI는 Linux와 macOS에서 Python 3.11로 실행합니다. Python 3.7 기준이 이후 모든 버전에서 테스트했다는 뜻은 아닙니다.
 
 ## 설정 파일이 없거나 잘못되었을 때
 
@@ -51,7 +57,7 @@ python3 -m json.tool ctx.config.json >/dev/null
 
 `init`은 `source`에서 컨텍스트 디렉터리를 구하지만 규칙 템플릿의 파일명은 `AGENT_RULES.md`로 고정합니다. `.ctx-local/AGENT_RULES.md` 같은 디렉터리 변경은 지원합니다. `source`를 `.ctx-local/team-rules.md`로 바꿔도 `init`이 그 이름의 파일을 만들지는 않습니다. 지원되는 파일명을 사용하거나 `sync` 전에 기존 원본을 직접 준비하세요.
 
-프로젝트 경로나 수집 파일명에 작은따옴표가 있으면 일부 명령의 경로를 인라인 Python 문자열에 넣는 방식 때문에 Python 문법 오류가 날 수 있습니다. 셸 따옴표만 추가해도 해결되지 않는 현재 제약입니다. 원본 프로젝트를 보존하고 따옴표 없는 단순한 경로를 사용한 뒤 그곳에서 설정과 링크를 검증하세요. 커스텀 컨텍스트 디렉터리의 일반 공백은 초기화 테스트에 포함됩니다.
+프로젝트·Python 실행 파일 경로, 설정한 컨텍스트·에이전트 경로, 수집 파일명에는 공백, 한글 등 유니코드, 작은따옴표를 사용할 수 있습니다. 셸 경로는 `bash "/path/to/team's project/ctx.sh" status`처럼 큰따옴표로 감싸세요. JSON에서는 `"source": "team's context/AGENT_RULES.md"`처럼 일반적인 큰따옴표 문자열을 사용하며 작은따옴표를 따로 이스케이프할 필요는 없습니다. 파일이 없다는 오류를 진단할 때 따옴표와 실제 설정 경로를 확인하세요. 예전에 복사한 CLI에서 이런 경로로 Python 문법 오류가 계속 나면 `ctx.sh`를 갱신하고 같은 리비전의 문서를 사용하세요.
 
 ## 규칙 파일 충돌, 누락, 잘못된 링크
 
@@ -257,6 +263,6 @@ PY
 
 `ctx.cmd`를 `ctx.sh` **옆에** 복사하세요. 명령 프롬프트에서는 `ctx.cmd`, PowerShell에서는 `./ctx.cmd` 또는 `.\ctx.cmd`, Git Bash에서는 `bash ctx.sh`를 사용합니다. `scripts/` 설치라면 두 파일을 모두 그곳에 두고 PowerShell에서 `.\scripts\ctx.cmd`로 실행하세요. 설정은 상위 프로젝트 루트에 둡니다.
 
-`[Error] Git Bash is required to run ctx on Windows.`는 래퍼가 확인하는 위치에서 Git Bash를 찾지 못했다는 뜻입니다. Git Bash와 적절한 Python 실행 파일을 다른 터미널뿐 아니라 래퍼가 실행하는 셸에서도 찾을 수 있어야 합니다. `ctx.sh`의 하드코딩된 Python 대체 경로는 특정 머신 전용이며 일반적인 설치 방법이 아닙니다.
+`[Error] Git Bash is required to run ctx on Windows.`는 래퍼가 확인하는 위치에서 Git Bash를 찾지 못했다는 뜻입니다. Git Bash와 적절한 Python 실행 파일을 다른 터미널뿐 아니라 래퍼가 실행하는 셸에서도 찾을 수 있어야 합니다. Git Bash에서 위 Python 진단을 실행하세요. CLI는 `python3`, `python`, `py -3` 순으로 검사하며 Python 3.7 이상을 실제로 실행하는 후보만 사용합니다. 설치에 맞게 `PATH`를 설정하세요. CLI는 개인 런타임 위치를 탐색하지 않습니다.
 
 심볼릭 링크 생성에는 Windows 지원과 충분한 권한도 필요합니다. 보통 개발자 모드나 적절한 권한의 셸로 준비합니다. `ln -s`가 실패하면 이 환경을 먼저 확인하세요. 심볼릭 링크 지원을 끈 Git은 링크를 일반 텍스트 파일로 checkout할 수 있습니다. `sync`는 충돌하는 일반 파일을 보존하므로 실행 전에 실제 파일 유형과 내용을 확인하세요. 이는 호환성 요구 사항이며, 여기서 실제 Windows 전체 실행을 검증하지는 않았습니다.

@@ -18,6 +18,10 @@ python3 --version
 git --version
 ```
 
+The CLI tries `python3`, `python`, then `py -3` from `PATH`. It runs each candidate and checks `sys.version_info >= (3, 7)`, skipping missing, unlaunchable, or older candidates. The first valid candidate is used for that command. If none works, it exits nonzero with an explanation; `init` validates Python before creating configuration or context files. `help` and `version` do not require Python. No private runtime location is searched.
+
+The standalone Python examples in these guides use `python3`. If your valid candidate is `python` or `py -3`, use that command instead, including with `-m json.tool`. Use [Python diagnostics](troubleshooting.md#python-git-or-the-script-cannot-be-found) to check the candidates in the same shell.
+
 Current verification uses macOS Apple Silicon, Bash 3.2.57, Python 3.11.8, and Git 2.42.0. Linux uses the same Bash commands. Windows setup is described below; it has not been execution-tested in this macOS environment. No Node.js, pip package, LLM API key, or running server is needed.
 
 ## 1. Create a demo
@@ -84,12 +88,14 @@ Preserve existing settings and instructions before changing an established repos
 1. Copy the CLI and configuration without silently overwriting an existing installation:
 
    ```bash
-   cp -i /path/to/ctx-kit/ctx.sh /path/to/project/
-   cp -i /path/to/ctx-kit/ctx.config.json /path/to/project/
-   cd /path/to/project
+   cp -i "/path/to/ctx-kit/ctx.sh" "/path/to/project/"
+   cp -i "/path/to/ctx-kit/ctx.config.json" "/path/to/project/"
+   cd "/path/to/project"
    ```
 
    If a destination already exists, decline replacement until you have compared it. Reuse your project's configured `source`, agents, and collection rules.
+
+   Interpreter and project paths, plus configured context, agent, and collection paths, support spaces, Unicode, and apostrophes. Wrap shell paths in double quotes, for example `cd "/path/to/team's project"`; see [path rules](configuration.md#prerequisites-and-path-rules).
 
 2. Inspect `ctx.config.json` and any rule files already in use:
 
@@ -171,7 +177,7 @@ This initializes a separate local Git repository inside the context directory, c
 
 ## Windows
 
-Install Git for Windows and a maintained Python 3 version, then ensure Python is available to Git Bash as `python3` or Python 3's `python`. Allow symlink creation in Windows; if link creation fails, follow [Windows troubleshooting](troubleshooting.md). The CLI has no automatic copy fallback for symlinks.
+Install Git for Windows and a maintained Python 3 version, then ensure Git Bash can run it as `python3`, `python`, or through the Python launcher `py -3`. The CLI validates these candidates in that order and requires Python 3.7+. A Python installation visible only in a different terminal is insufficient. Allow symlink creation in Windows; if link creation fails, follow [Windows troubleshooting](troubleshooting.md). The CLI has no automatic copy fallback for symlinks.
 
 For a new demo in PowerShell, from a directory without those two target directories:
 

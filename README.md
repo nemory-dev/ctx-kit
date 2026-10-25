@@ -12,6 +12,8 @@ Use it when a new session needs to know **what was decided, what changed, what w
 
 Requires Bash, Python 3.7 or later, and standard Unix tools. Git is needed to clone this repository and use Git integration. CI runs on Linux and macOS with Python 3.11; macOS verification includes Apple Silicon and Bash 3.2. Windows needs Git Bash, Python, and symlink creation permission; see [Windows installation](docs/en/getting-started.md#windows).
 
+The CLI checks `python3`, `python`, then `py -3` on `PATH`, selecting the first that runs and reports Python 3.7+. Prefer a maintained Python 3 release. If none qualifies, commands fail with an explanation; `init` checks before creating configuration or context files. `help` and `version` work without Python. See [Python diagnostics](docs/en/troubleshooting.md#python-git-or-the-script-cannot-be-found) if detection fails.
+
 Try a **new demo directory** first. Run this from a directory without an existing `ctx-kit` or `ctx-demo`:
 
 ```bash
