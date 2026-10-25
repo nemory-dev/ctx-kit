@@ -68,9 +68,15 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 # ── Utils ──────────────────────────────────────────────
-ctx_git() {
+ctx_git() (
+  # Hook Git variables belong to the parent repository, not the local context.
+  local ctx_git_env_names ctx_git_env_name
+  ctx_git_env_names=$(git rev-parse --local-env-vars) || return $?
+  for ctx_git_env_name in $ctx_git_env_names; do
+    unset "$ctx_git_env_name"
+  done
   git -c safe.directory=* -C "$CONTEXT_DIR" "$@"
-}
+)
 
 # Shared storage primitives keep the copied CLI standalone.
 context_python() {
@@ -301,9 +307,12 @@ context_git_commit() {
 import subprocess
 
 command = ["git", "-c", "safe.directory=*", "-C", os.environ["CTX_STORAGE_DIR"]]
+git_env = os.environ.copy()
+for name in subprocess.check_output(["git", "rev-parse", "--local-env-vars"], text=True).splitlines():
+    git_env.pop(name, None)
 
 def git(args):
-    result = subprocess.run(command + args)
+    result = subprocess.run(command + args, env=git_env)
     if result.returncode:
         raise SystemExit(result.returncode)
 
@@ -311,10 +320,10 @@ git(["add", "-A", "--", ".", ":(exclude,literal)work-log/.ctx.lock",
      ":(exclude,literal)work-log/.ctx-archive-transaction.json",
      ":(exclude,glob)**/.ctx-write-*"])
 head = subprocess.run(command + ["rev-parse", "--verify", "HEAD"],
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                      env=git_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 changed = head.returncode != 0
 if not changed:
-    result = subprocess.run(command + ["diff-index", "--quiet", "HEAD", "--"])
+    result = subprocess.run(command + ["diff-index", "--quiet", "HEAD", "--"], env=git_env)
     if result.returncode not in (0, 1):
         raise SystemExit(result.returncode)
     changed = result.returncode == 1
@@ -1787,6 +1796,143 @@ PYEOF
 }
 
 # ── hook ───────────────────────────────────────────────
+_manage_pre_commit_hook() {
+  python3 - "$1" "$(py_path "$PROJECT_ROOT/.git/hooks/pre-commit")" <<'PYEOF'
+import errno
+import os
+import stat
+import sys
+import tempfile
+
+action, hook = sys.argv[1:]
+backup = hook + ".ctx-kit-original"
+begin = b"# --- BEGIN CTX-KIT GIT-SYNC HOOK ---"
+end = b"# --- END CTX-KIT GIT-SYNC HOOK ---"
+ctx_block = b'''if [ -f "ctx.sh" ]; then
+  bash ctx.sh _hook_run_pre_commit
+elif [ -f "scripts/ctx.sh" ]; then
+  bash scripts/ctx.sh _hook_run_pre_commit
+fi
+'''
+legacy = b"\n" + begin + b"\n" + ctx_block + end + b"\n"
+previous = b'''ctx_original_hook="$(dirname "$0")/pre-commit.ctx-kit-original"
+'''
+with_original = previous + b'''if [ ! -e "$ctx_original_hook" ] && [ ! -L "$ctx_original_hook" ]; then
+  echo "Error: original pre-commit hook is missing: $ctx_original_hook" >&2
+  exit 1
+fi
+if [ -x "$ctx_original_hook" ]; then
+  "$ctx_original_hook" "$@"
+  ctx_original_status=$?
+  if [ "$ctx_original_status" -ne 0 ]; then
+    exit "$ctx_original_status"
+  fi
+fi
+'''
+without_original = previous + b'''if [ -e "$ctx_original_hook" ] || [ -L "$ctx_original_hook" ]; then
+  echo "Error: unexpected pre-commit hook backup: $ctx_original_hook" >&2
+  exit 1
+fi
+'''
+
+def wrapper(original):
+    return (b"#!/bin/sh\n" + begin + b"\n"
+            + (with_original if original else without_original) + ctx_block + end + b"\n")
+
+def inspect(path):
+    if not os.path.lexists(path):
+        return None
+    info = os.lstat(path)
+    if not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
+        raise ValueError(f"Refusing non-file hook path: {path}")
+    return info
+
+def replace_text(path, content, mode):
+    fd, temporary = tempfile.mkstemp(prefix=".ctx-hook-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            os.chmod(temporary, mode)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+try:
+    info = inspect(hook)
+    saved = inspect(backup)
+    if info is not None and stat.S_ISLNK(info.st_mode):
+        try:
+            os.stat(hook)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                raise ValueError(f"Refusing cyclic original hook symlink: {hook}") from error
+            raise
+    content = None
+    legacy_hook = False
+    if info is not None and os.path.isfile(hook):
+        with open(hook, "rb") as stream:
+            content = stream.read()
+    managed = info is not None and not stat.S_ISLNK(info.st_mode) and content in (wrapper(True), wrapper(False))
+    if managed:
+        original = content == wrapper(True)
+        if original != (saved is not None):
+            raise ValueError(f"Original pre-commit hook backup is missing or unexpected: {backup}. Preserve both paths and reconcile before retrying.")
+    else:
+        if saved is not None:
+            raise ValueError(f"Hook backup already exists: {backup}. Preserve both hooks; refusing to overwrite either.")
+        original = info is not None
+        if content is not None and (begin in content or end in content):
+            if (stat.S_ISLNK(info.st_mode) or not content.endswith(legacy)
+                    or content.count(begin) != 1 or content.count(end) != 1):
+                raise ValueError(f"Modified or unrecognized ctx hook: {hook}. Preserve it and reconcile before retrying.")
+            content = content[:-len(legacy)]
+            legacy_hook = True
+
+    if action == "check-install":
+        pass
+    elif action == "install":
+        if managed:
+            print("  Pre-commit hook already installed in .git/hooks/pre-commit")
+        else:
+            os.makedirs(os.path.dirname(hook), exist_ok=True)
+            if original:
+                if stat.S_ISLNK(info.st_mode):
+                    os.symlink(os.readlink(hook), backup)
+                elif content is not None:
+                    # Exclusive creation protects an unrelated or concurrent backup.
+                    with open(backup, "xb") as stream:
+                        stream.write(content)
+                        os.chmod(backup, stat.S_IMODE(info.st_mode))
+                        stream.flush()
+                        os.fsync(stream.fileno())
+            replace_text(hook, wrapper(original), 0o755)
+            print("  Installed pre-commit wrapper in .git/hooks/pre-commit")
+    elif action == "uninstall":
+        if managed:
+            if original:
+                os.replace(backup, hook)
+                print("  Restored original pre-commit hook")
+            else:
+                os.unlink(hook)
+                print("  Removed ctx-kit pre-commit hook")
+        elif legacy_hook:
+            replace_text(hook, content, stat.S_IMODE(info.st_mode))
+            print("  Removed legacy ctx-kit hook block")
+        else:
+            print("  ctx-kit hook is not installed in .git/hooks/pre-commit")
+    else:
+        raise ValueError(f"Unknown hook action: {action}")
+except (OSError, ValueError) as error:
+    print(f"Error: {error}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
 cmd_hook() {
   case "${1:-status}" in
     install)   _hook_install ;;
@@ -1807,6 +1953,9 @@ _hook_install() {
     echo -e "${RED}Error: $PROJECT_ROOT is not a Git repository (.git not found).${NC}" >&2
     return 1
   fi
+
+  # Refuse ambiguous hook/backup state before changing project configuration.
+  _manage_pre_commit_hook check-install
 
   local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
   echo -e "${BOLD}[ctx hook install] Configuring Git integration for '${rel_context_dir}'${NC}"
@@ -1847,33 +1996,8 @@ with open(cfg_file, "w", encoding="utf-8") as f:
 PYEOF
   echo -e "  ${GREEN}✓${NC} Enabled git_sync in ctx.config.json (auto_log: true)"
 
-  # 4) Install pre-commit hook in .git/hooks/pre-commit
-  local hooks_dir="$PROJECT_ROOT/.git/hooks"
-  local hook_file="$hooks_dir/pre-commit"
-  mkdir -p "$hooks_dir"
-
-  local HOOK_BEGIN="# --- BEGIN CTX-KIT GIT-SYNC HOOK ---"
-  local HOOK_END="# --- END CTX-KIT GIT-SYNC HOOK ---"
-
-  if [ -f "$hook_file" ] && grep -q "$HOOK_BEGIN" "$hook_file"; then
-    echo -e "  ${YELLOW}~${NC} Pre-commit hook already installed in .git/hooks/pre-commit"
-  else
-    if [ ! -f "$hook_file" ]; then
-      echo "#!/bin/sh" > "$hook_file"
-    fi
-    cat >> "$hook_file" << 'HOOKEOF'
-
-# --- BEGIN CTX-KIT GIT-SYNC HOOK ---
-if [ -f "ctx.sh" ]; then
-  bash ctx.sh _hook_run_pre_commit
-elif [ -f "scripts/ctx.sh" ]; then
-  bash scripts/ctx.sh _hook_run_pre_commit
-fi
-# --- END CTX-KIT GIT-SYNC HOOK ---
-HOOKEOF
-    chmod +x "$hook_file" 2>/dev/null || true
-    echo -e "  ${GREEN}✓${NC} Installed pre-commit hook in .git/hooks/pre-commit"
-  fi
+  # 4) Chain the original hook without changing its interpreter or exit behavior.
+  _manage_pre_commit_hook install
 
   echo -e "\n${GREEN}🎉 Git sync hook setup complete!${NC}"
   echo "  - Changes in ${rel_context_dir}/ will be auto-committed locally on 'git commit'"
@@ -1883,24 +2007,8 @@ HOOKEOF
 
 _hook_uninstall() {
   require_config
-  local hook_file="$PROJECT_ROOT/.git/hooks/pre-commit"
-  local HOOK_BEGIN="# --- BEGIN CTX-KIT GIT-SYNC HOOK ---"
-  local HOOK_END="# --- END CTX-KIT GIT-SYNC HOOK ---"
-
-  if [ -f "$hook_file" ] && grep -q "$HOOK_BEGIN" "$hook_file"; then
-    python3 -c "
-with open('$hook_file', 'r', encoding='utf-8') as f:
-    content = f.read()
-import re
-pattern = re.compile(r'\n?# --- BEGIN CTX-KIT GIT-SYNC HOOK ---.*?# --- END CTX-KIT GIT-SYNC HOOK ---\n?', re.DOTALL)
-new_content = pattern.sub('', content).strip()
-with open('$hook_file', 'w', encoding='utf-8') as f:
-    f.write(new_content + ('\n' if new_content else ''))
-"
-    echo -e "  ${GREEN}✓${NC} Removed ctx-kit hook from .git/hooks/pre-commit"
-  else
-    echo -e "  ${YELLOW}~${NC} ctx-kit hook is not installed in .git/hooks/pre-commit"
-  fi
+  require_python
+  _manage_pre_commit_hook uninstall
 
   CTX_CONFIG="$(py_path "$CONFIG")" python3 << 'PYEOF'
 import json

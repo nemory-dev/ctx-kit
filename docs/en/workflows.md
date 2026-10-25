@@ -205,22 +205,24 @@ bash ctx.sh hook status
 
 If the identity check fails, configure your normal project or global Git identity first. A project-only identity is not automatically a configuration for the independent context repository; see [Git identity troubleshooting](troubleshooting.md).
 
-Installation initializes an independent Git repository inside the context directory, adds a context ignore rule when needed, enables `git_sync.enabled`, and installs a pre-commit block. It defaults `auto_log` to `true` only when the key is absent; an existing `false` value is preserved. Inspect the reported configuration with `hook status`.
+Installation initializes an independent Git repository inside the context directory, adds a context ignore rule when needed, enables `git_sync.enabled`, and installs a pre-commit wrapper. It defaults `auto_log` to `true` only when the key is absent; an existing `false` value is preserved. Inspect the reported configuration with `hook status`.
+
+An existing hook is saved as `.git/hooks/pre-commit.ctx-kit-original`, preserving its contents, permissions, and any symlink. The wrapper runs an executable original first with the same working directory, arguments, and input. A nonzero exit blocks the commit and skips ctx-kit; a successful exit allows ctx-kit to run. A non-executable original remains saved and is skipped. Reinstalling an unchanged wrapper is safe; reinstalling an older inline integration migrates the known ctx-kit block while retaining the rest of the hook.
 
 With `git_sync.enabled` and `auto_log` both `true`, a normal project commit attempt can append a log **before** the commit. Its title uses staged file names and its summary contains a staged diff stat. It uses `pending` for both commit fields; it does not later attach the real commit hash or produce a semantic AI summary. A later hook or the commit itself can fail, leaving the pre-commit entry in place. Use the explicit work-unit closure workflow for validation results and outcomes.
 
-The installed hook also snapshots context changes in the independent local Git repository. ctx-kit contains no remote push step, but local Git and ignore rules are not a secrecy guarantee: already tracked files, separately configured remotes, exports, and generated bundles still require review.
+The installed hook also snapshots context changes in the independent local Git repository. Context Git commands clear inherited repository-local Git environment variables so they use the context repository's own index; project inspection keeps the commit's active index, including `git commit --only`. ctx-kit contains no remote push step, but local Git and ignore rules are not a secrecy guarantee: already tracked files, separately configured remotes, exports, and generated bundles still require review.
 
-The installer uses `.git/hooks/pre-commit` directly. A linked worktree with a `.git` file and a custom `core.hooksPath` are not supported automatically. When a hook already exists, ctx-kit appends its block; an earlier `exit` can prevent the block from running. See [hook troubleshooting](troubleshooting.md) before relying on automatic execution.
+The installer uses `.git/hooks/pre-commit` directly. A linked worktree with a `.git` file and a custom `core.hooksPath` are not supported automatically. See [hook troubleshooting](troubleshooting.md) before relying on automatic execution.
 
-To remove the ctx-kit hook block and disable Git sync:
+To remove the ctx-kit wrapper and disable Git sync:
 
 ```bash
 bash ctx.sh hook uninstall
 bash ctx.sh hook status
 ```
 
-Uninstall keeps other hook content, context history, and the ignore rule. It does not remove the independent context repository.
+Uninstall restores the saved original hook exactly, including permissions or a symlink, or removes the wrapper if no original existed. It keeps context history, the ignore rule, and the independent context repository. Installation and removal refuse to overwrite a modified wrapper or conflicting backup, or proceed without a required backup; preserve those files and inspect the reported error before retrying.
 
 ## Upgrade an existing installation
 
