@@ -180,7 +180,7 @@ bash ctx.sh generate project
 
 복사한 배포 설정의 두 Git 값은 모두 `true`이지만, 커밋 직전 동작에 영향을 주려면 관리형 hook도 설치되어 있어야 합니다. 수동 설정에서는 두 값을 `false`로 유지하고 `--no-hook --no-backfill`로 초기화합니다.
 
-`hook install`은 `git_sync.enabled`를 `true`로 설정합니다. `auto_log`는 필드가 없을 때만 `true`로 설정하므로 명시적인 `false`는 유지합니다. 또한 hook 설치, 필요한 경우 컨텍스트 Git 제외 설정, 별도 로컬 컨텍스트 저장소 초기화를 수행합니다. 사용을 선택하기 전에 [작업 흐름](workflows.md)을 확인하세요. `hook uninstall`은 관리형 hook 블록을 제거하고 `enabled`를 `false`로 설정하지만 로컬 컨텍스트 저장소나 제외 규칙은 제거하지 않습니다.
+`hook install`은 `git_sync.enabled`를 `true`로 설정합니다. `auto_log`는 필드가 없을 때만 `true`로 설정하므로 명시적인 `false`는 유지합니다. 또한 hook 설치, 필요한 경우 컨텍스트 Git 제외 설정, 별도 로컬 컨텍스트 저장소 초기화를 수행합니다. 사용을 선택하기 전에 [작업 흐름](workflows.md)을 확인하세요. `hook uninstall`은 보관한 원본 훅을 복원하고, 원본이 없었다면 관리형 wrapper를 제거한 뒤 `enabled`를 `false`로 설정합니다. 로컬 컨텍스트 저장소나 제외 규칙은 제거하지 않습니다. wrapper 수정, 백업 충돌, 필수 백업 누락이 감지되면 훅 파일을 덮어쓰지 않고 오류를 반환합니다.
 
 ## 설정 검증과 반영
 

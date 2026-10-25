@@ -180,7 +180,7 @@ Prefer reviewed text files such as `README.md` and specific documentation paths.
 
 The copied configuration ships with both Git settings set to `true`, but the managed hook must also be installed for them to affect pre-commit behavior. For a manual setup, keep both values `false` and initialize with `--no-hook --no-backfill`.
 
-`hook install` sets `git_sync.enabled` to `true`. It sets `auto_log` to `true` only when that field is missing, so an explicit `false` remains `false`. It also installs the hook, configures context Git exclusion when needed, and initializes a separate local context repository. Review [Workflows](workflows.md) before opting in. `hook uninstall` removes the managed hook block and sets `enabled` to `false`; it does not remove the local context repository or exclusion rule.
+`hook install` sets `git_sync.enabled` to `true`. It sets `auto_log` to `true` only when that field is missing, so an explicit `false` remains `false`. It also installs the hook, configures context Git exclusion when needed, and initializes a separate local context repository. Review [Workflows](workflows.md) before opting in. `hook uninstall` restores the saved original hook, or removes the managed wrapper if there was no original, and sets `enabled` to `false`; it does not remove the local context repository or exclusion rule. A modified wrapper, conflicting backup, or missing required backup causes an error instead of overwriting hook files.
 
 ## Validate and apply changes
 

@@ -116,8 +116,9 @@ bash ctx.sh hook status
 | --- | --- |
 | Git worktree처럼 `.git`이 파일임 | 설치기는 `.git` **디렉터리**를 요구하므로 정상 worktree에서도 `.git not found`를 표시할 수 있습니다. 수동 `log`·`backfill`을 사용하고 실제 Git 디렉터리를 쓰는 훅 연동은 저장소 담당자와 검토하세요. |
 | `core.hooksPath`가 설정됨 | 설치기와 `hook status`는 이 설정을 따르지 않고 `.git/hooks/pre-commit`을 사용합니다. “Installed”만으로 Git이 그 파일을 실행한다고 볼 수 없습니다. 기존 훅 체계를 검토한 뒤 그곳에 연동하세요. |
-| 기존 훅이 ctx 블록 전에 종료됨 | 설치기는 블록을 끝에 추가합니다. 앞의 `exit`, 실패, 훅 실행기가 실행을 막을 수 있으므로 전체 흐름을 확인한 뒤 수정하세요. |
-| 훅에서 CLI를 찾지 못함 | 설치된 블록은 루트의 `ctx.sh`와 `scripts/ctx.sh`만 확인합니다. 지원되는 위치를 복원하세요. |
+| 이전 인라인 훅이 ctx-kit 실행 전에 종료됨 | 갱신한 CLI로 `bash ctx.sh hook install`을 실행해 알려진 인라인 블록을 wrapper로 변환합니다. 실행 가능한 보관 원본을 먼저 실행하며, 원본이 0이 아닌 코드로 종료하면 여전히 커밋을 막고 ctx-kit을 실행하지 않습니다. |
+| wrapper 수정, 백업 충돌, 원본 백업 누락 | `.git/hooks/pre-commit`과 `.git/hooks/pre-commit.ctx-kit-original`이 있으면 보존합니다. 설치·제거 시 안전하지 않은 교체를 거부하므로 표시된 파일을 확인하고 의도한 원본을 복구한 뒤 재시도하세요. 오류를 우회하려고 백업을 삭제하지 마세요. |
+| 훅에서 CLI를 찾지 못함 | 설치된 wrapper는 루트의 `ctx.sh`와 `scripts/ctx.sh`만 확인합니다. 지원되는 위치를 복원하세요. |
 | `Author identity unknown` 또는 로컬 Git 커밋 실패 | 컨텍스트는 독립 Git 저장소를 쓰며 설치 중 첫 로컬 커밋 오류는 숨겨질 수 있습니다. 아래 명령으로 해당 저장소의 작성자 설정을 확인하고, 의도한 작성자 정보를 직접 설정한 뒤 재시도하세요. |
 
 ```bash

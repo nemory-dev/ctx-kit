@@ -116,8 +116,9 @@ bash ctx.sh hook status
 | --- | --- |
 | `.git` is a file, as in a Git worktree | The installer requires a `.git` **directory**, so it can report `.git not found` inside a valid worktree. Use manual `log`/`backfill` workflows; have the repository owner review any hook integration with the real Git directory. |
 | `core.hooksPath` is set | The installer and `hook status` use `.git/hooks/pre-commit` and do not honor that setting. An “Installed” label does not prove Git runs that file. Integrate through your existing hook system after reviewing it. |
-| An existing hook exits before the ctx block | The installer appends its block; an earlier `exit`, failure, or hook runner may prevent it from executing. Review the whole control flow before editing. |
-| The hook cannot find the CLI | The installed block checks only root `ctx.sh` and `scripts/ctx.sh`. Restore one of those supported locations. |
+| An older inline hook exits before ctx-kit runs | Run `bash ctx.sh hook install` with the updated CLI to migrate the known inline block to a wrapper. It runs an executable saved original first; a nonzero exit still blocks the commit and skips ctx-kit. |
+| Modified wrapper, backup collision, or missing original backup | Preserve `.git/hooks/pre-commit` and `.git/hooks/pre-commit.ctx-kit-original` if present. Installation/removal refuses unsafe replacement; inspect the reported files and recover the intended original before retrying. Do not delete a backup to bypass the error. |
+| The hook cannot find the CLI | The installed wrapper checks only root `ctx.sh` and `scripts/ctx.sh`. Restore one of those supported locations. |
 | `Author identity unknown` or local Git commit failure | The context has its own Git repository, and the initial local commit failure can be suppressed by installation. Inspect the identity available to that repository below; configure the intended identity yourself before retrying. |
 
 ```bash
