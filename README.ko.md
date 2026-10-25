@@ -12,6 +12,8 @@ ctx-kit은 Bash와 Python 표준 라이브러리로 동작합니다. 편집 가�
 
 Bash, Python 3.7 이상, 기본 Unix 도구가 필요합니다. 저장소 복제와 Git 연동에는 Git이 필요합니다. CI는 Linux와 macOS에서 Python 3.11로 실행하며, macOS 검증에는 Apple Silicon과 Bash 3.2가 포함됩니다. Windows에서는 Git Bash, Python, 심볼릭 링크 생성 권한이 필요합니다. [Windows 설치](docs/ko/getting-started.md#windows)를 참고하세요.
 
+CLI는 `PATH`에서 `python3`, `python`, `py -3` 순으로 실제 실행하여 Python 3.7 이상인 첫 후보를 사용합니다. 유지보수 중인 Python 3 버전을 권장합니다. 적합한 후보가 없으면 원인을 알리고 실패하며, `init`은 설정이나 컨텍스트 파일을 생성하기 전에 검사합니다. `help`와 `version`은 Python 없이 사용할 수 있습니다. 탐색에 실패하면 [Python 진단](docs/ko/troubleshooting.md#python-git-스크립트를-찾지-못할-때)을 참고하세요.
+
 먼저 **새 데모 디렉터리**에서 확인하세요. `ctx-kit`과 `ctx-demo`가 없는 디렉터리에서 실행합니다.
 
 ```bash

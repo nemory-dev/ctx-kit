@@ -19,28 +19,8 @@ py_path() {
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 
-# Fallback shim if python3 command is missing
-if ! command -v python3 >/dev/null 2>&1; then
-  if command -v python >/dev/null 2>&1; then
-    python3() { python "$@"; }
-  elif [ -x "/c/Users/ez/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe" ]; then
-    python3() (
-      export PYTHONUTF8=1
-      export PYTHONIOENCODING=utf-8
-      for name in CTX_ROOT CTX_LOG_FILE CTX_CONFIG; do
-        value="${!name:-}"
-        if [ -n "$value" ]; then
-          export "$name=$(cygpath -w "$value" 2>/dev/null || echo "$value")"
-        fi
-      done
-      converted=()
-      for arg in "$@"; do
-        converted+=("${arg//\/c\//C:\/}")
-      done
-      "/c/Users/ez/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe" "${converted[@]}"
-    )
-  fi
-fi
+# Selected lazily so help/version do not require a Python installation.
+CTX_PYTHON=()
 
 VERSION="1.1.0"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -80,7 +60,7 @@ ctx_git() (
 
 # Shared storage primitives keep the copied CLI standalone.
 context_python() {
-  CTX_STORAGE_DIR="$(py_path "$CONTEXT_DIR")" python3 -c '
+  CTX_STORAGE_DIR="$(py_path "$CONTEXT_DIR")" ctx_python -c '
 import errno
 import hashlib
 import json
@@ -335,9 +315,33 @@ PYEOF
 }
 
 require_python() {
-  if ! command -v python3 &>/dev/null; then
-    echo -e "${RED}Error: python3 is required.${NC}" >&2; exit 1
+  if [ "${#CTX_PYTHON[@]}" -gt 0 ]; then
+    return 0
   fi
+
+  local candidate executable
+  local -a command_args
+  for candidate in python3 python py; do
+    executable=$(type -P "$candidate") || continue
+    command_args=("$executable")
+    if [ "$candidate" = "py" ]; then
+      command_args+=("-3")
+    fi
+    # Keep the probe parseable by Python 2 so old commands fail cleanly.
+    if "${command_args[@]}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 7) else 1)' </dev/null >/dev/null 2>&1; then
+      CTX_PYTHON=("${command_args[@]}")
+      return 0
+    fi
+  done
+
+  echo -e "${RED}Error: Python 3.7 or newer is required.${NC}" >&2
+  echo "  Install Python and add python3, python, or py -3 to PATH." >&2
+  return 1
+}
+
+ctx_python() {
+  require_python || return $?
+  "${CTX_PYTHON[@]}" "$@"
 }
 
 require_config() {
@@ -352,24 +356,27 @@ resolve_context_dir() {
   require_config
   require_python
   local source_dir
-  source_dir=$(python3 -c "import json, os
-with open('$(py_path "$CONFIG")') as f: d=json.load(f)
-print(os.path.dirname(d.get('source', 'sample-context/AGENT_RULES.md')) or 'sample-context')")
+  source_dir=$(ctx_python -c 'import json, os, sys
+# Paths consumed by Bash must use LF even with native Windows Python.
+sys.stdout.reconfigure(newline="\n")
+with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
+print(os.path.dirname(d.get("source", "sample-context/AGENT_RULES.md")) or "sample-context")' "$(py_path "$CONFIG")")
   CONTEXT_DIR="$PROJECT_ROOT/$source_dir"
 }
 
 get_source() {
   require_python
-  python3 -c "import json
-with open('$(py_path "$CONFIG")') as f: d=json.load(f)
-print(d['source'])"
+  ctx_python -c 'import json, sys
+sys.stdout.reconfigure(newline="\n")
+with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
+print(d["source"])' "$(py_path "$CONFIG")"
 }
 
 get_agents() {
   require_python
-  python3 -c "import json
-with open('$(py_path "$CONFIG")') as f: d=json.load(f)
-for a in d['agent_rules']: print(f\"{a['name']}|{a['path']}|{a['enabled']}\")" | tr -d '\r'
+  ctx_python -c 'import json, sys
+with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
+for a in d["agent_rules"]: print("{name}|{path}|{enabled}".format(**a))' "$(py_path "$CONFIG")" | tr -d '\r'
 }
 
 # ── help ───────────────────────────────────────────────
@@ -435,6 +442,7 @@ cmd_init() {
     esac
   done
 
+  require_python
   echo -e "${BOLD}[ctx init] Initializing context structure${NC}"
   echo ""
 
@@ -781,7 +789,7 @@ _init_file() {
   if [ ! -f "$filepath" ]; then
     # Keep ctx.sh standalone while rendering the configured project-relative paths.
     CTX_TEMPLATE_CONTEXT="${CONTEXT_DIR#$PROJECT_ROOT/}" \
-      CTX_TEMPLATE_COMMAND="bash ${SCRIPT_PATH#$PROJECT_ROOT/}" python3 -c '
+      CTX_TEMPLATE_COMMAND="bash ${SCRIPT_PATH#$PROJECT_ROOT/}" ctx_python -c '
 import os, sys
 template = sys.stdin.read()
 template = template.replace("sample-context/", os.environ["CTX_TEMPLATE_CONTEXT"] + "/")
@@ -871,7 +879,7 @@ cmd_sync() {
   fi
 
   # Detect every enabled target conflict before changing links or metadata.
-  if ! python3 - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" "$(py_path "$SOURCE_PATH")" <<'PY'
+  if ! ctx_python - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" "$(py_path "$SOURCE_PATH")" <<'PY'
 import json
 import os
 import sys
@@ -923,14 +931,14 @@ PY
     if [ "$enabled" = "True" ] || [ "$enabled" = "true" ]; then
       if [ ! -L "$LINK_PATH" ]; then
         mkdir -p "$(dirname "$LINK_PATH")"
-        RELATIVE=$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))' "$(py_path "$SOURCE_PATH")" "$(py_path "$LINK_PATH")")
+        RELATIVE=$(ctx_python -c 'import os, sys; sys.stdout.reconfigure(newline="\n"); print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))' "$(py_path "$SOURCE_PATH")" "$(py_path "$LINK_PATH")")
         ln -s "$RELATIVE" "$LINK_PATH"
       fi
       echo -e "  ${GREEN}✓${NC} $name: $path → $SOURCE"
     else
       if echo "$ENABLED_PATHS" | grep -qx "$path"; then
         echo -e "  ${YELLOW}-${NC} $name ($path) disabled — kept (shared with an enabled agent)"
-      elif [ -L "$LINK_PATH" ] && python3 - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" "$(py_path "$SOURCE_PATH")" "$(py_path "$LINK_PATH")" <<'PY'
+      elif [ -L "$LINK_PATH" ] && ctx_python - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" "$(py_path "$SOURCE_PATH")" "$(py_path "$LINK_PATH")" <<'PY'
 import json
 import os
 import sys
@@ -1068,6 +1076,7 @@ cmd_export() {
 # ── list ───────────────────────────────────────────────
 cmd_list() {
   require_config
+  require_python
   echo -e "${BOLD}[ctx list] Agents${NC}"
   echo ""
   get_agents | while IFS="|" read -r name path enabled; do
@@ -1101,7 +1110,7 @@ cmd_disable() {
 
 _toggle_agent() {
   # Pass via env vars to prevent special character injection
-  CTX_AGENT_NAME="$1" CTX_AGENT_STATE="$2" CTX_CONFIG="$CONFIG" python3 << 'PYEOF'
+  CTX_AGENT_NAME="$1" CTX_AGENT_STATE="$2" CTX_CONFIG="$(py_path "$CONFIG")" ctx_python << 'PYEOF'
 import json, os
 
 name   = os.environ["CTX_AGENT_NAME"]
@@ -1139,7 +1148,7 @@ cmd_generate() {
 
   # Read generate config
   local result
-  result=$(CTX_TYPE="$TYPE" CTX_CONFIG="$CONFIG" python3 << 'PYEOF'
+  result=$(CTX_TYPE="$TYPE" CTX_CONFIG="$(py_path "$CONFIG")" ctx_python << 'PYEOF'
 import json, os, sys
 
 type_key = os.environ["CTX_TYPE"]
@@ -1165,8 +1174,8 @@ PYEOF
   [ $? -ne 0 ] && { echo -e "${RED}$result${NC}"; exit 1; }
 
   local OUTPUT PATTERNS
-  OUTPUT=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('output',''))")
-  PATTERNS=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); [print(p) for p in d.get('collect',[])]")
+  OUTPUT=$(echo "$result" | ctx_python -c "import json,sys; sys.stdout.reconfigure(newline='\n'); d=json.load(sys.stdin); print(d.get('output',''))")
+  PATTERNS=$(echo "$result" | ctx_python -c "import json,sys; sys.stdout.reconfigure(newline='\n'); d=json.load(sys.stdin); [print(p) for p in d.get('collect',[])]")
 
   [ -z "$OUTPUT" ] && { echo -e "${RED}Error: 'output' not defined for type '$TYPE'.${NC}"; exit 1; }
 
@@ -1192,14 +1201,15 @@ HEADER
     while IFS= read -r filepath; do
       [ -f "$filepath" ] || continue
       local rel
-      rel=$(python3 -c "import os; print(os.path.relpath('$filepath', '$PROJECT_ROOT'))")
+      rel=$(ctx_python -c 'import os, sys; sys.stdout.reconfigure(newline="\n"); print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$(py_path "$filepath")" "$(py_path "$PROJECT_ROOT")")
       echo -e "  ${GREEN}+${NC} $rel"
       printf '\n## [%s]\n\n' "$rel" >> "$OUTPUT_PATH"
       cat "$filepath" >> "$OUTPUT_PATH"
       printf '\n' >> "$OUTPUT_PATH"
       found=$((found + 1))
-    done < <(CTX_ROOT="$PROJECT_ROOT" CTX_PAT="$pattern" python3 -c "
+    done < <(CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_PAT="$pattern" ctx_python -c "
 import glob, os, sys
+sys.stdout.reconfigure(newline='\n')
 root = os.environ['CTX_ROOT']
 pat  = os.environ['CTX_PAT']
 matches = sorted(glob.glob(os.path.join(root, pat), recursive=True))
@@ -1349,7 +1359,7 @@ cmd_timeline() {
     return 0
   fi
 
-  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_LIMIT="$LIMIT" CTX_COMMIT="$COMMIT" CTX_JSON="$JSON_MODE" python3 << 'PYEOF'
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_LIMIT="$LIMIT" CTX_COMMIT="$COMMIT" CTX_JSON="$JSON_MODE" ctx_python << 'PYEOF'
 import json
 import os
 
@@ -1797,7 +1807,7 @@ PYEOF
 
 # ── hook ───────────────────────────────────────────────
 _manage_pre_commit_hook() {
-  python3 - "$1" "$(py_path "$PROJECT_ROOT/.git/hooks/pre-commit")" <<'PYEOF'
+  ctx_python - "$1" "$(py_path "$PROJECT_ROOT/.git/hooks/pre-commit")" <<'PYEOF'
 import errno
 import os
 import stat
@@ -1980,7 +1990,7 @@ _hook_install() {
   fi
 
   # 3) Ensure git_sync is enabled in ctx.config.json
-  CTX_CONFIG="$(py_path "$CONFIG")" python3 << 'PYEOF'
+  CTX_CONFIG="$(py_path "$CONFIG")" ctx_python << 'PYEOF'
 import json
 import os
 cfg_file = os.environ["CTX_CONFIG"]
@@ -2010,7 +2020,7 @@ _hook_uninstall() {
   require_python
   _manage_pre_commit_hook uninstall
 
-  CTX_CONFIG="$(py_path "$CONFIG")" python3 << 'PYEOF'
+  CTX_CONFIG="$(py_path "$CONFIG")" ctx_python << 'PYEOF'
 import json
 import os
 cfg_file = os.environ["CTX_CONFIG"]
@@ -2036,11 +2046,12 @@ _hook_status() {
   echo "  Context dir:     $rel_context_dir"
 
   local cfg_status
-  cfg_status=$(python3 -c "
-import json
-with open('$(py_path "$CONFIG")') as f: d=json.load(f)
-gs = d.get('git_sync', {})
-print(f\"{gs.get('enabled', False)}|{gs.get('auto_log', False)}\")")
+  cfg_status=$(ctx_python -c '
+import json, sys
+sys.stdout.reconfigure(newline="\n")
+with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
+gs = d.get("git_sync", {})
+print("{}|{}".format(gs.get("enabled", False), gs.get("auto_log", False)))' "$(py_path "$CONFIG")")
   local cfg_enabled="${cfg_status%|*}"
   local cfg_autolog="${cfg_status#*|}"
 
@@ -2079,11 +2090,12 @@ _hook_run_pre_commit() {
   local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
 
   local cfg_status
-  cfg_status=$(python3 -c "
-import json
-with open('$(py_path "$CONFIG")') as f: d=json.load(f)
-gs = d.get('git_sync', {})
-print(f\"{gs.get('enabled', False)}|{gs.get('auto_log', False)}\")")
+  cfg_status=$(ctx_python -c '
+import json, sys
+sys.stdout.reconfigure(newline="\n")
+with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
+gs = d.get("git_sync", {})
+print("{}|{}".format(gs.get("enabled", False), gs.get("auto_log", False)))' "$(py_path "$CONFIG")")
   local cfg_enabled="${cfg_status%|*}"
   local cfg_autolog="${cfg_status#*|}"
 

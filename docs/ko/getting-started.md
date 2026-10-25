@@ -18,6 +18,10 @@ python3 --version
 git --version
 ```
 
+CLI는 `PATH`에서 `python3`, `python`, `py -3` 순으로 후보를 찾습니다. 각 후보를 실제 실행하고 `sys.version_info >= (3, 7)`을 검사하며, 없거나 실행할 수 없거나 버전이 낮은 후보는 건너뜁니다. 명령을 실행할 때 처음 통과한 후보를 사용합니다. 모두 실패하면 설명과 함께 0이 아닌 코드로 종료하며, `init`은 설정이나 컨텍스트 파일을 생성하기 전에 Python을 검증합니다. `help`와 `version`에는 Python이 필요하지 않습니다. 개인 런타임 위치는 탐색하지 않습니다.
+
+이 가이드의 독립적인 Python 예제는 `python3`를 사용합니다. 유효한 후보가 `python`이나 `py -3`이면 `-m json.tool`을 포함한 예제에서도 해당 명령으로 바꾸세요. [Python 진단](troubleshooting.md#python-git-스크립트를-찾지-못할-때)으로 같은 셸의 후보를 확인할 수 있습니다.
+
 현재 검증 환경은 macOS Apple Silicon, Bash 3.2.57, Python 3.11.8, Git 2.42.0입니다. Linux에서도 같은 Bash 명령을 사용합니다. Windows 설치는 아래에 설명하지만 이 macOS 환경에서 실제 실행을 검증하지는 않았습니다. Node.js, pip 패키지, LLM API 키, 실행 중인 서버는 필요하지 않습니다.
 
 ## 1. 데모 만들기
@@ -84,12 +88,14 @@ bash ctx.sh timeline --limit 1 --json
 1. 기존 설치를 조용히 덮어쓰지 않도록 CLI와 설정을 복사합니다.
 
    ```bash
-   cp -i /path/to/ctx-kit/ctx.sh /path/to/project/
-   cp -i /path/to/ctx-kit/ctx.config.json /path/to/project/
-   cd /path/to/project
+   cp -i "/path/to/ctx-kit/ctx.sh" "/path/to/project/"
+   cp -i "/path/to/ctx-kit/ctx.config.json" "/path/to/project/"
+   cd "/path/to/project"
    ```
 
    대상 파일이 이미 있으면 비교하기 전에는 교체를 거절하세요. 프로젝트에서 사용하던 `source`, 에이전트, 수집 규칙을 유지합니다.
+
+   Python 실행 파일과 프로젝트 경로, 설정한 컨텍스트·에이전트·수집 경로에는 공백, 한글 등 유니코드, 작은따옴표를 사용할 수 있습니다. 셸 경로는 `cd "/path/to/team's project"`처럼 큰따옴표로 감싸세요. [경로 규칙](configuration.md#전제-조건과-경로-규칙)을 참고하세요.
 
 2. `ctx.config.json`과 이미 사용 중인 규칙 파일을 확인합니다.
 
@@ -171,7 +177,7 @@ bash ctx.sh hook status
 
 ## Windows
 
-Git for Windows와 유지보수 중인 Python 3를 설치하고, Git Bash에서 `python3` 또는 Python 3의 `python`으로 실행되는지 확인하세요. Windows의 심볼릭 링크 생성도 허용되어야 합니다. 실패하면 [Windows 문제 해결](troubleshooting.md)을 참고하세요. CLI에는 링크를 일반 복사로 바꾸는 자동 대체 기능이 없습니다.
+Git for Windows와 유지보수 중인 Python 3를 설치하고, Git Bash에서 `python3`, `python` 또는 Python 런처 `py -3`로 실행되는지 확인하세요. CLI는 이 순서로 후보를 검증하며 Python 3.7 이상을 요구합니다. 다른 터미널에서만 찾을 수 있는 Python 설치로는 부족합니다. Windows의 심볼릭 링크 생성도 허용되어야 합니다. 실패하면 [Windows 문제 해결](troubleshooting.md)을 참고하세요. CLI에는 링크를 일반 복사로 바꾸는 자동 대체 기능이 없습니다.
 
 두 대상 디렉터리가 없는 위치에서 PowerShell로 데모를 만듭니다.
 
