@@ -62,7 +62,7 @@ The rules ask agents to read current context at session start, update affected c
 
 - **Existing rules are preserved.** `init`/`sync` report conflicts with ordinary files or unrelated links. They do not merge instructions for you. See [conflict recovery](docs/en/troubleshooting.md).
 - **Storage is local, but privacy needs configuration.** `--no-hook` also skips automatic Git exclusion. Hook installation adds or recognizes a context exclusion, but already tracked files remain tracked. Check [local Git exclusions](docs/en/getting-started.md#local-git-exclusions) before committing; generated links can otherwise point teammates at a missing private directory.
-- **Review text before sharing.** `generate` does not apply `.gitignore` or scan for secrets. `export --all` adds archived task/decision Markdown, not monthly log files. There is no fixed token-saving guarantee. See [export and collection](docs/en/workflows.md).
+- **Review text before sharing.** `generate` does not apply `.gitignore` or scan for secrets. `export --all` adds archived task/decision Markdown and complete monthly timeline JSONL records; review private details and output volume. There is no fixed token-saving guarantee. See [export and collection](docs/en/workflows.md).
 
 Work-log writes use a shared lock and atomic file replacement. Archive records pending writes in a recovery journal before removing source content. Interrupted operations recover before the next context write; unexpected external edits cause an error instead of being overwritten. [Recovery details](docs/en/troubleshooting.md) explain how to preserve and inspect affected files.
 

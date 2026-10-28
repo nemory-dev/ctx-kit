@@ -100,7 +100,7 @@ bash ctx.sh timeline --limit 5 --json
 | `--all` | Inspect the entire Git history instead of applying the limit. Review the possible volume before using it. |
 | `--type` | Label applied to imported entries; default `work`. |
 
-With no Git commits, `backfill` reports that there is nothing to import. It skips commits already represented in the **active** log. It does not check monthly archives, so repeating a backfill after archiving can import those commits again. Choose a limited range appropriate to your adoption workflow and inspect the result.
+With no Git commits, `backfill` reports that there is nothing to import. It skips commits represented by `commit` or `fullCommit` in the active log or any `archive/timeline-*.jsonl` file, including the legacy archive. Legacy hash-only references are resolved in one Git batch, so a change to `core.abbrev` does not reimport them. An ambiguous reference stops backfill; preserve the record and identify its full commit ID before retrying. Repeating a backfill after archiving leaves those commits archived. Invalid archive JSONL stops backfill before rewriting the active log. Existing work-unit records and archived occurrences are preserved. Choose a limited range appropriate to your adoption workflow and inspect the result.
 
 ## Keep the active context small
 
@@ -149,9 +149,9 @@ bash ctx.sh export --all
 
 Review the output before pasting it into an external service. The default export includes available `MASTER_PLAN.md`, `decisions.md`, `backlog.md`, the warm digest, and a rendered view of the latest 10 active timeline rows. It does not include `AGENT_RULES.md` or generated source bundles.
 
-`--all` additionally includes `archive/completed-tasks.md` and `archive/decisions-deprecated.md`. Despite the broader wording in CLI output, it does **not** include monthly `timeline-*.jsonl` archives. When a historical log is relevant, inspect and share only the selected archive file separately.
+`--all` additionally includes `archive/completed-tasks.md`, `archive/decisions-deprecated.md`, and every `archive/timeline-*.jsonl` file, including legacy records. Timeline files appear in filename order as JSONL blocks with their filenames. Each complete record retains its summary, files, metadata, and repeated occurrences. Review sensitive details and output volume before sharing; default export still omits these monthly details.
 
-Export prints terminal headers and ANSI color escapes; there is no `--plain` option. Redirecting output preserves those bytes. Also verify recent logs separately with `timeline --json`: export suppresses a timeline-rendering failure and can still print “Export complete.”
+Export prints terminal headers and ANSI color escapes; there is no `--plain` option. Redirecting output preserves those bytes. A recent-timeline rendering error or an archived-JSONL read/validation error returns nonzero without printing “Export complete.” Output emitted before an error may be incomplete; discard it, fix the reported source, and retry. Export remains read-only: it creates no writer lock and does not recover a pending archive transaction.
 
 ## Collect reviewed source files for an LLM
 

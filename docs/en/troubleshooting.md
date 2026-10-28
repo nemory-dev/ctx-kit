@@ -208,7 +208,7 @@ PY
 bash ctx.sh timeline --limit 20 --json
 ```
 
-Object syntax is not a full validation of every record field. `timeline` may report a traceback for malformed data; run it directly because `export` suppresses its errors.
+Object syntax is not a full validation of every record field. `timeline` may report a traceback for malformed data; `export` propagates that failure. Run `timeline --json` directly to diagnose the active log.
 
 `Refusing to replace non-regular file`, `Permission denied`, or an I/O error requires inspecting the exact path, permissions, and available storage. A directory or symlink at a log/destination path is intentionally not replaced by the atomic writer. Preserve it and resolve the file-type conflict deliberately. Do not make the entire project world-writable.
 
@@ -279,8 +279,8 @@ For a conflict, reconcile the backup, the external edit, and the pending transac
 | An input read, output write, or replacement fails | A permission or I/O error prevents replacement. This run leaves the output untouched and removes its temporary file. | Inspect the reported input/output path, output directory permissions, and available storage; correct the cause and rerun. A replacement needs write access to the output directory. Do not make the project world-writable. |
 | `Output changed during generation; preserving it` | The output changed between the initial check and the check before replacement, so this run stops without replacing it. Concurrent writers are not locked. | Inspect and preserve the current output, finish or stop the other writer, then rerun the command. |
 | Generated output contains unexpected data | Collection uses filesystem globbing and concatenates matching files. It does not honor Git ignore rules or exclude binary/private files; only the output and its aliases are automatically excluded. | Prefer an explicit, reviewed `collect` list. Inspect collected paths and the result locally, and exclude credentials, private context, large files, and binary files before sharing. |
-| `export --all` omits archived timeline records | `--all` adds archived completed tasks and deprecated decisions, but does not include monthly `archive/timeline-*.jsonl` files. | Inspect those files separately when you need full history. `timeline` also reads only the hot log. |
-| Export reports success but recent work is missing | Export suppresses `timeline` errors and can exit 0 even when that section failed. | Run `bash ctx.sh timeline --limit 20 --json` directly and use the JSONL diagnostic above before trusting the export. |
+| `export --all` fails while reading archived timelines | A monthly or legacy `archive/timeline-*.jsonl` file is unreadable, contains invalid JSON, or has a non-object row. | Preserve the source and inspect the reported file and line using the JSONL diagnostic above. Discard partial output, repair the source from evidence, and retry. |
+| Export stops while rendering recent work | An active-timeline read or rendering failure is propagated with a nonzero exit status. | Run `bash ctx.sh timeline --limit 20 --json` directly and use the JSONL diagnostic above. Fix the data and retry; “Export complete.” is printed only after successful output. |
 
 From the project root, inspect the configured `project` output without following a final symlink:
 

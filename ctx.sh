@@ -60,7 +60,7 @@ ctx_git() (
 
 # Shared storage primitives keep the copied CLI standalone.
 context_python() {
-  CTX_STORAGE_DIR="$(py_path "$CONTEXT_DIR")" ctx_python -c '
+  CTX_STORAGE_MODE="${1:-write}" CTX_STORAGE_DIR="$(py_path "$CONTEXT_DIR")" ctx_python -c '
 import errno
 import hashlib
 import json
@@ -90,6 +90,16 @@ def read_jsonl(path):
                 raise ValueError(f"{path}: expected a JSON object at line {number}")
             entries.append(entry)
     return entries
+
+
+def archive_timeline_paths():
+    directory = os.path.join(os.environ["CTX_STORAGE_DIR"], "archive")
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return []
+    return [os.path.join(directory, name) for name in sorted(names)
+            if name.startswith("timeline-") and name.endswith(".jsonl")]
 
 
 def stage_text_writes(writes):
@@ -273,9 +283,12 @@ def context_lock():
 
 
 try:
-    with context_lock():
-        recover_archive()
+    if os.environ["CTX_STORAGE_MODE"] == "--read-only":
         exec(compile(sys.stdin.read(), "<ctx storage>", "exec"), globals())
+    else:
+        with context_lock():
+            recover_archive()
+            exec(compile(sys.stdin.read(), "<ctx storage>", "exec"), globals())
 except (OSError, ValueError) as error:
     print(f"Error: {error}", file=sys.stderr)
     sys.exit(1)
@@ -1131,7 +1144,7 @@ cmd_export() {
     echo "$SEPARATOR"
     echo ""
     echo "## [RECENT WORK UNITS (HOT)]"
-    cmd_timeline --limit 10 2>/dev/null || true
+    cmd_timeline --limit 10 || return $?
   fi
 
   # Cold Archives (only if --all)
@@ -1149,6 +1162,15 @@ cmd_export() {
       cat "$CONTEXT_DIR/archive/decisions-deprecated.md"
       echo ""
     fi
+    context_python --read-only <<'PYEOF' || return $?
+for path in archive_timeline_paths():
+    entries = read_jsonl(path)
+    print(f"### [Archived Timeline: {os.path.basename(path)}]\n")
+    print("```jsonl")
+    for entry in entries:
+        print(json.dumps(entry, ensure_ascii=False))
+    print("```\n")
+PYEOF
   else
     if [ -d "$CONTEXT_DIR/archive" ]; then
       echo "$SEPARATOR"
@@ -1592,12 +1614,39 @@ all_mode = os.environ["CTX_ALL"] == "true"
 entry_type = os.environ["CTX_TYPE"]
 
 existing_commits = set()
+legacy_commits = set()
 existing_entries = read_jsonl(log_file)
-for entry in existing_entries:
-    if entry.get("fullCommit"):
-        existing_commits.add(entry["fullCommit"])
-    if entry.get("commit"):
-        existing_commits.add(entry["commit"])
+for path in [log_file] + archive_timeline_paths():
+    entries = existing_entries if path == log_file else read_jsonl(path)
+    for entry in entries:
+        if entry.get("fullCommit"):
+            existing_commits.add(entry["fullCommit"])
+        if entry.get("commit"):
+            commit = entry["commit"]
+            existing_commits.add(commit)
+            if (not entry.get("fullCommit") and isinstance(commit, str)
+                    and 4 <= len(commit) <= 64
+                    and all(char in "0123456789abcdefABCDEF" for char in commit)):
+                legacy_commits.add(commit)
+
+if legacy_commits:
+    references = sorted(legacy_commits)
+    result = subprocess.run(
+        ["git", "-C", root, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        input="\n".join(references) + "\n", text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise ValueError("Cannot resolve existing commit references: " + result.stderr.strip())
+    resolved = result.stdout.splitlines()
+    if len(resolved) != len(references):
+        raise ValueError("Incomplete Git response while resolving existing commit references")
+    for reference, record in zip(references, resolved):
+        object_id, kind = record.rsplit(" ", 1)
+        if kind == "ambiguous":
+            raise ValueError(f"Ambiguous existing commit reference: {reference}; record its full commit ID before backfill")
+        if kind == "commit" and object_id.startswith(reference.lower()):
+            existing_commits.add(object_id)
 
 git_cmd = ["git", "-C", root, "log", "--date=iso-strict"]
 if not all_mode:
