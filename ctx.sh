@@ -2104,14 +2104,42 @@ _hook_install() {
   _manage_pre_commit_hook check-install
 
   local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
+  local ignore_pattern
+  ignore_pattern=$(ctx_python - "$(py_path "$CONFIG")" "$rel_context_dir" <<'PY'
+import json
+import os
+import sys
+
+# Bash command substitution strips trailing LF; validate the original JSON path.
+with open(sys.argv[1], encoding="utf-8") as stream:
+    source = json.load(stream).get("source", "sample-context/AGENT_RULES.md")
+raw_context = os.path.dirname(source) or "sample-context"
+if "\n" in raw_context or "\r" in raw_context:
+    print("Error: context paths with line breaks cannot be added to .gitignore.", file=sys.stderr)
+    sys.exit(1)
+path = os.path.normpath(sys.argv[2]).replace(os.sep, "/")
+sys.stdout.reconfigure(newline="\n")
+escaped = "".join("\\" + char if char in "\\*?[]!# " else char for char in path)
+print("/" + escaped + "/")
+PY
+  ) || return $?
   echo -e "${BOLD}[ctx hook install] Configuring Git integration for '${rel_context_dir}'${NC}"
 
   # 1) Check if already ignored (in .gitignore or .git/info/exclude)
-  if git -C "$PROJECT_ROOT" check-ignore -q "$rel_context_dir/" 2>/dev/null; then
+  if git -C "$PROJECT_ROOT" check-ignore -q -- "$rel_context_dir/"; then
     echo -e "  ${GREEN}✓${NC} ${rel_context_dir}/ is already ignored by Git (.gitignore or .git/info/exclude)"
   else
+    local ignore_status=$?
+    if [ "$ignore_status" -ne 1 ]; then
+      echo "Error: git check-ignore failed; leaving Git integration unchanged." >&2
+      return "$ignore_status"
+    fi
     local gitignore="$PROJECT_ROOT/.gitignore"
-    printf "\n# Local private AI context (ctx-kit, never pushed)\n${rel_context_dir}/\n" >> "$gitignore"
+    printf '\n%s\n%s\n' '# Local private AI context (ctx-kit, never pushed)' "$ignore_pattern" >> "$gitignore" || return $?
+    if ! git -C "$PROJECT_ROOT" check-ignore -q -- "$rel_context_dir/"; then
+      echo "Error: context directory is still not ignored; stopping Git integration setup." >&2
+      return 1
+    fi
     echo -e "  ${GREEN}✓${NC} Added ${rel_context_dir}/ to .gitignore"
   fi
 
@@ -2201,7 +2229,7 @@ print("{}|{}".format(gs.get("enabled", False), gs.get("auto_log", False)))' "$(p
     echo -e "  pre-commit hook: ${RED}Not installed${NC}"
   fi
 
-  if git -C "$PROJECT_ROOT" check-ignore -q "$rel_context_dir/" 2>/dev/null; then
+  if git -C "$PROJECT_ROOT" check-ignore -q -- "$rel_context_dir/" 2>/dev/null; then
     echo -e "  Git exclusion:   ${GREEN}Ignored${NC} (${rel_context_dir}/ is safe from remote push)"
   else
     echo -e "  Git exclusion:   ${RED}Not ignored!${NC} (Warning: context may be tracked by main repo)"
