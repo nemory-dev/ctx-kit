@@ -344,6 +344,49 @@ ctx_python() {
   "${CTX_PYTHON[@]}" "$@"
 }
 
+# Configuration updates must not truncate the current file before publishing.
+config_python() {
+  CTX_CONFIG="$(py_path "$CONFIG")" ctx_python -c '
+import json
+import os
+import stat
+import sys
+import tempfile
+
+
+def write_config(data):
+    path = os.environ["CTX_CONFIG"]
+    existing = os.lstat(path)
+    if not stat.S_ISREG(existing.st_mode):
+        raise ValueError(f"Refusing to replace non-regular configuration file: {path}")
+    descriptor = None
+    temporary = None
+    try:
+        directory = os.path.dirname(os.path.abspath(path))
+        descriptor, temporary = tempfile.mkstemp(prefix=".ctx-write-", dir=directory)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            descriptor = None
+            json.dump(data, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.chmod(temporary, stat.S_IMODE(existing.st_mode))
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary is not None:
+            os.unlink(temporary)
+
+
+try:
+    exec(compile(sys.stdin.read(), "<ctx config>", "exec"), globals())
+except (OSError, ValueError) as error:
+    print(f"Error: {error}", file=sys.stderr)
+    sys.exit(1)
+'
+}
+
 require_config() {
   if [ ! -f "$CONFIG" ]; then
     echo -e "${RED}Error: ctx.config.json not found.${NC}"
@@ -1110,30 +1153,30 @@ cmd_disable() {
 
 _toggle_agent() {
   # Pass via env vars to prevent special character injection
-  CTX_AGENT_NAME="$1" CTX_AGENT_STATE="$2" CTX_CONFIG="$(py_path "$CONFIG")" ctx_python << 'PYEOF'
+  CTX_AGENT_NAME="$1" CTX_AGENT_STATE="$2" config_python << 'PYEOF'
 import json, os
 
 name   = os.environ["CTX_AGENT_NAME"]
 state  = os.environ["CTX_AGENT_STATE"].lower() == "true"
 config = os.environ["CTX_CONFIG"]
 
-with open(config) as f:
+with open(config, encoding="utf-8") as f:
     d = json.load(f)
 
-found = False
+changed = []
 for a in d["agent_rules"]:
     if a["name"].lower() == name.lower():
         a["enabled"] = state
-        found = True
-        label = "enabled" if state else "disabled"
-        print(f"  → {a['name']} {label}")
+        changed.append(a["name"])
 
-if not found:
+if not changed:
     print(f"  ✗ Agent '{name}' not found.")
     print(f"  Available: {[a['name'] for a in d['agent_rules']]}")
 
-with open(config, "w") as f:
-    json.dump(d, f, indent=2, ensure_ascii=False)
+write_config(d)
+label = "enabled" if state else "disabled"
+for agent_name in changed:
+    print(f"  → {agent_name} {label}")
 PYEOF
 }
 
@@ -2025,7 +2068,7 @@ _hook_install() {
   fi
 
   # 3) Ensure git_sync is enabled in ctx.config.json
-  CTX_CONFIG="$(py_path "$CONFIG")" ctx_python << 'PYEOF'
+  config_python << 'PYEOF'
 import json
 import os
 cfg_file = os.environ["CTX_CONFIG"]
@@ -2036,8 +2079,7 @@ if "git_sync" not in data or not isinstance(data["git_sync"], dict):
 data["git_sync"]["enabled"] = True
 if "auto_log" not in data["git_sync"]:
     data["git_sync"]["auto_log"] = True
-with open(cfg_file, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
+write_config(data)
 PYEOF
   echo -e "  ${GREEN}✓${NC} Enabled git_sync in ctx.config.json (auto_log: true)"
 
@@ -2055,7 +2097,7 @@ _hook_uninstall() {
   require_python
   _manage_pre_commit_hook uninstall
 
-  CTX_CONFIG="$(py_path "$CONFIG")" ctx_python << 'PYEOF'
+  config_python << 'PYEOF'
 import json
 import os
 cfg_file = os.environ["CTX_CONFIG"]
@@ -2063,8 +2105,7 @@ with open(cfg_file, encoding="utf-8") as f:
     data = json.load(f)
 if "git_sync" in data and isinstance(data["git_sync"], dict):
     data["git_sync"]["enabled"] = False
-with open(cfg_file, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
+write_config(data)
 PYEOF
   echo -e "  ${GREEN}✓${NC} Disabled git_sync in ctx.config.json"
 }

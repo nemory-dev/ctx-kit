@@ -228,6 +228,8 @@ bash ctx.sh hook status
 
 Uninstall restores the saved original hook exactly, including permissions or a symlink, or removes the wrapper if no original existed. It keeps context history, the ignore rule, and the independent context repository. Installation and removal refuse to overwrite a modified wrapper or conflicting backup, or proceed without a required backup; preserve those files and inspect the reported error before retrying.
 
+Both operations save configuration through [atomic replacement](configuration.md#configuration-writes). A failed configuration write or replacement preserves the existing JSON, but earlier hook, ignore-rule, or context-repository changes are not rolled back. Inspect `ctx.config.json` and `bash ctx.sh hook status` before retrying; after an uninstall failure, the original hook may already have been restored or the wrapper removed.
+
 ## Upgrade an existing installation
 
 Keep a recoverable copy of your existing configuration and context, including customized rules. Obtain the new `ctx.sh` from a reviewed repository revision and replace the script at its current location. Preserve `ctx.config.json` and the directory selected by `source`.

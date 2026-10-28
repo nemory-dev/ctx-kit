@@ -139,6 +139,12 @@ Keep the `AGENT_RULES.md` basename: `init` creates that filename inside the dire
 
 Changing `source` does not move context files, migrate existing links, or rewrite any `generate.<type>.output`. Existing links to an old source can become conflicts under the new configuration. Back up and reconcile the existing installation before changing this field; see [Troubleshooting](troubleshooting.md).
 
+## Configuration writes
+
+`enable`, `disable`, `hook install`, and `hook uninstall` save an existing regular `ctx.config.json` by writing the complete JSON to a temporary file in the same directory, flushing and syncing it, then atomically replacing the configuration. Existing file permissions are retained. A temporary write or replacement failure exits nonzero, leaves the existing configuration unchanged, and cleans up the temporary file. A symlink or other non-regular configuration entry is rejected without changing that entry or its target.
+
+This protects the configuration file during replacement; it does not roll back the whole command. A later `sync` failure can leave an agent flag already saved, and a failed hook operation can leave earlier hook, ignore-rule, or context-repository changes in place. Concurrent configuration edits are not locked. See [Troubleshooting](troubleshooting.md#configuration-save-fails) before retrying a failed save.
+
 ## Agent registration and link behavior
 
 Add a row to `agent_rules`, then run `sync`. Use a distinct label; the destination must be a file path the intended tool actually reads. The CLI does not discover agent installations.

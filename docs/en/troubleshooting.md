@@ -59,6 +59,20 @@ python3 -m json.tool ctx.config.json >/dev/null
 
 Project and interpreter paths, configured context and agent paths, and collected filenames support spaces, Unicode, and apostrophes. Quote shell paths with double quotes, for example `bash "/path/to/team's project/ctx.sh" status`. In JSON, use ordinary double-quoted strings, such as `"source": "team's context/AGENT_RULES.md"`; an apostrophe needs no JSON escape. Check quoting and the actual configured paths when diagnosing a missing file. If an older copied CLI still reports a Python syntax error for such a path, update `ctx.sh` and use documentation from the same revision.
 
+## Configuration save fails
+
+`enable`, `disable`, `hook install`, and `hook uninstall` replace a regular `ctx.config.json` only after completing a temporary JSON write in its directory. A failure before replacement exits nonzero, preserves the existing configuration and its permissions, and cleans up this run's temporary file. `Refusing to replace non-regular configuration file` rejects a configuration symlink or other non-regular entry without changing it or its target. Keep the entry and a backup while deciding how to provide a regular configuration file at the project root.
+
+For a write or replacement error, check the reported path, available storage, and the project directory's write permissions; replacement needs directory write access. Do not make the project world-writable. After correcting the cause, validate the preserved configuration and inspect the operation's current state:
+
+```bash
+python3 -m json.tool ctx.config.json >/dev/null
+bash ctx.sh list
+bash ctx.sh hook status
+```
+
+Use only the checks relevant to the failed operation. Configuration replacement does not roll back other changes: `enable`/`disable` may save a flag before a later `sync` failure; hook installation may already change the ignore rule or initialize context Git, and removal may already restore the original hook or remove the wrapper. Review those paths before retrying. Finish or stop other configuration writers first; configuration edits are not locked.
+
 ## Rules conflict, are missing, or point to the wrong source
 
 `Conflict: ... already exists and is not a ctx-managed symlink` protects an existing regular file, directory, unrelated symlink, or broken unrelated symlink. `sync` checks all enabled targets before changing links or the plan's date. An initial `init` may already have created templates before reaching this conflict.

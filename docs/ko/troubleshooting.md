@@ -59,6 +59,20 @@ python3 -m json.tool ctx.config.json >/dev/null
 
 프로젝트·Python 실행 파일 경로, 설정한 컨텍스트·에이전트 경로, 수집 파일명에는 공백, 한글 등 유니코드, 작은따옴표를 사용할 수 있습니다. 셸 경로는 `bash "/path/to/team's project/ctx.sh" status`처럼 큰따옴표로 감싸세요. JSON에서는 `"source": "team's context/AGENT_RULES.md"`처럼 일반적인 큰따옴표 문자열을 사용하며 작은따옴표를 따로 이스케이프할 필요는 없습니다. 파일이 없다는 오류를 진단할 때 따옴표와 실제 설정 경로를 확인하세요. 예전에 복사한 CLI에서 이런 경로로 Python 문법 오류가 계속 나면 `ctx.sh`를 갱신하고 같은 리비전의 문서를 사용하세요.
 
+## 설정 저장에 실패할 때
+
+`enable`, `disable`, `hook install`, `hook uninstall`은 설정과 같은 디렉터리의 임시 JSON 쓰기를 마친 뒤 일반 파일인 `ctx.config.json`을 교체합니다. 교체 전 실패하면 0이 아닌 코드로 종료하고, 기존 설정과 권한을 보존하며 이 실행의 임시 파일을 정리합니다. `Refusing to replace non-regular configuration file`은 설정이 심볼릭 링크 등 일반 파일이 아닌 항목이어서 해당 항목과 연결 대상을 변경하지 않고 거부했다는 뜻입니다. 프로젝트 루트에 일반 설정 파일을 준비할 방법을 결정할 때까지 기존 항목과 백업을 보존하세요.
+
+쓰기나 교체 오류라면 표시된 경로, 남은 저장 공간, 프로젝트 디렉터리의 쓰기 권한을 확인하세요. 교체에는 디렉터리 쓰기 권한이 필요합니다. 프로젝트 전체를 누구나 쓸 수 있게 바꾸지 마세요. 원인을 해결한 뒤 보존된 설정 문법과 현재 작업 상태를 확인합니다.
+
+```bash
+python3 -m json.tool ctx.config.json >/dev/null
+bash ctx.sh list
+bash ctx.sh hook status
+```
+
+실패한 작업에 필요한 확인만 실행하세요. 설정 교체는 다른 변경을 되돌리지 않습니다. `enable`/`disable`은 이후 `sync` 실패 전에 활성화 값을 저장했을 수 있습니다. 훅 설치는 ignore 규칙이나 컨텍스트 Git을 이미 변경했을 수 있고, 제거는 원본 훅을 이미 복원했거나 wrapper를 삭제했을 수 있습니다. 재시도 전에 해당 경로를 검토하세요. 다른 설정 작성자의 작업을 먼저 마치거나 중단하세요. 설정 수정을 잠그지는 않습니다.
+
 ## 규칙 파일 충돌, 누락, 잘못된 링크
 
 `Conflict: ... already exists and is not a ctx-managed symlink`는 기존 일반 파일, 디렉터리, 다른 원본을 향하는 링크, 관련 없는 끊어진 링크를 보호하는 오류입니다. `sync`는 링크나 계획의 날짜를 바꾸기 전에 활성 대상 전체의 충돌을 확인합니다. 첫 `init`은 이 충돌을 만나기 전에 템플릿을 일부 생성했을 수 있습니다.
