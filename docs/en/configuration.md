@@ -168,6 +168,10 @@ bash ctx.sh status
 - When every row for a path is disabled, it removes a symlink resolving to the current source, except a link needed in the source's or an enabled rule link's resolution chain. It preserves disabled regular files and unrelated or broken unmanaged links.
 - After conflict checks pass, it updates the `> Last Updated:` line in the context's `MASTER_PLAN.md`, when that file and line exist.
 
+The date update writes to a unique temporary file in the context directory, then atomically replaces the regular `MASTER_PLAN.md`, preserving its permissions. Existing `MASTER_PLAN.md.bak` files, symlinks, and directories are left untouched. A write or replacement failure returns a nonzero status before changing agent links, preserves the existing plan and backups, and removes only this update's temporary file. A symlinked plan, including a broken link, is refused without changing the link or its target.
+
+If this update fails, check the reported path, available space, and the context directory's write permissions, then retry `bash ctx.sh sync`. For a symlinked plan, preserve the link and target while deciding how to provide a regular `MASTER_PLAN.md`.
+
 There is no `force`, `import`, or `doctor` command. Resolve conflicts by reviewing and backing up existing instructions, then choosing a non-conflicting target or intentionally reconciling the files. Follow [Troubleshooting](troubleshooting.md) for concrete steps.
 
 ## Source-bundle collection

@@ -959,9 +959,48 @@ PY
 
   # Auto-update Last Updated in MASTER_PLAN.md
   MASTER_PLAN="$CONTEXT_DIR/MASTER_PLAN.md"
-  if [ -f "$MASTER_PLAN" ]; then
+  if [ -f "$MASTER_PLAN" ] || [ -L "$MASTER_PLAN" ]; then
     TODAY=$(date +%Y-%m-%d)
-    sed -i.bak "s/^> Last Updated: .*/> Last Updated: $TODAY/" "$MASTER_PLAN" && rm -f "${MASTER_PLAN}.bak"
+    if ! ctx_python - "$(py_path "$MASTER_PLAN")" "$TODAY" <<'PY'
+import os
+import re
+import stat
+import sys
+import tempfile
+
+descriptor = None
+temporary = None
+try:
+    path, today = sys.argv[1:]
+    existing = os.lstat(path)
+    if not stat.S_ISREG(existing.st_mode):
+        raise ValueError(f"Refusing to replace non-regular master plan: {path}")
+    with open(path, "rb") as stream:
+        content = stream.read()
+    updated = re.sub(br"^> Last Updated: [^\n]*",
+                     b"> Last Updated: " + today.encode("ascii"), content, flags=re.MULTILINE)
+    directory = os.path.dirname(os.path.abspath(path))
+    descriptor, temporary = tempfile.mkstemp(prefix=".ctx-write-", dir=directory)
+    with os.fdopen(descriptor, "wb") as stream:
+        descriptor = None
+        stream.write(updated)
+        stream.flush()
+        os.chmod(temporary, stat.S_IMODE(existing.st_mode))
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+    temporary = None
+except (OSError, ValueError) as error:
+    print(f"Error: {error}", file=sys.stderr)
+    sys.exit(1)
+finally:
+    if descriptor is not None:
+        os.close(descriptor)
+    if temporary is not None:
+        os.unlink(temporary)
+PY
+    then
+      return 1
+    fi
     echo -e "  ${GREEN}✓${NC} MASTER_PLAN.md Last Updated → $TODAY"
   fi
 
