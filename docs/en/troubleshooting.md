@@ -43,6 +43,14 @@ For an installed Python outside `PATH`, add its executable's directory in the sh
 
 The standalone Python examples below use `python3`; substitute your passing `python` or `py -3` command if needed. The regression suite is verified on macOS with Bash 3.2 and Python 3.11.8; actual Windows execution has not been verified here. CI runs with Python 3.11 on Linux and macOS. The Python 3.7 baseline is not a claim that the suite was run on every later version.
 
+## CLI input errors
+
+An unknown command returns a nonzero status and prints help. Unknown options for `init`, `export`, and `log` (including `record`) also fail; an option typo is not recorded as work-log text. Positional log summaries still work. For summary text starting with a hyphen, use `bash ctx.sh log --summary "--literal summary"`.
+
+An unregistered name in `enable` or `disable` reports the available agents and fails without rewriting configuration or running `sync`. Inspect names with `bash ctx.sh list`. `timeline --limit` and `backfill --limit` require a non-negative integer, even when there are no logs or Git commits; `0` is allowed.
+
+`list`, `status`, and `sync` propagate agent-list read errors, including malformed JSON or missing row fields, instead of displaying success after a Python failure. Fix the reported configuration error before retrying. This is not full configuration-schema validation. An empty `agent_rules` array is valid. `status` still reports missing source files or links as informational output; use the explicit link checks below to verify those paths.
+
 ## Missing or malformed configuration
 
 `Error: ctx.config.json not found.` refers to the project root selected by the script location. A script in an arbitrary tools directory will look for configuration there. Move the standalone CLI to the supported root or `scripts/` location before creating another configuration by mistake.

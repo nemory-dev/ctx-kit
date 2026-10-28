@@ -418,8 +418,9 @@ print(d["source"])' "$(py_path "$CONFIG")"
 get_agents() {
   require_python
   ctx_python -c 'import json, sys
+sys.stdout.reconfigure(newline="\n")
 with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
-for a in d["agent_rules"]: print("{name}|{path}|{enabled}".format(**a))' "$(py_path "$CONFIG")" | tr -d '\r'
+for a in d["agent_rules"]: print("{name}|{path}|{enabled}".format(**a))' "$(py_path "$CONFIG")"
 }
 
 # ── help ───────────────────────────────────────────────
@@ -481,7 +482,7 @@ cmd_init() {
       --no-backfill) AUTO_BACKFILL="false"; shift ;;
       --hook)        AUTO_HOOK="true"; shift ;;
       --no-hook)     AUTO_HOOK="false"; shift ;;
-      *) shift ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
     esac
   done
 
@@ -850,6 +851,8 @@ sys.stdout.write(template)
 cmd_status() {
   require_config
   resolve_context_dir
+  local agents
+  agents=$(get_agents) || return $?
   echo -e "${BOLD}[ctx status] Current State${NC}"
   echo ""
 
@@ -883,7 +886,8 @@ cmd_status() {
   fi
   echo ""
 
-  get_agents | while IFS="|" read -r name path enabled; do
+  printf '%s\n' "$agents" | while IFS="|" read -r name path enabled; do
+    [ -n "$name$path$enabled" ] || continue
     LINK_PATH="$PROJECT_ROOT/$path"
     if [ "$enabled" = "True" ] || [ "$enabled" = "true" ]; then
       if [ -L "$LINK_PATH" ] && [ -f "$LINK_PATH" ]; then
@@ -909,6 +913,8 @@ cmd_status() {
 cmd_sync() {
   require_config
   resolve_context_dir
+  local agents
+  agents=$(get_agents) || return $?
   echo -e "${BOLD}[ctx sync] Syncing symlinks${NC}"
   echo ""
 
@@ -1006,9 +1012,10 @@ PY
 
   # Collect enabled paths first so disabled rows that share a path
   # (e.g. multiple AGENTS.md-spec tools) don't remove an active symlink.
-  ENABLED_PATHS=$(get_agents | awk -F'|' '$3=="True" || $3=="true" {print $2}' | sort -u)
+  ENABLED_PATHS=$(printf '%s\n' "$agents" | awk -F'|' '$3=="True" || $3=="true" {print $2}' | sort -u)
 
-  get_agents | while IFS="|" read -r name path enabled; do
+  printf '%s\n' "$agents" | while IFS="|" read -r name path enabled; do
+    [ -n "$name$path$enabled" ] || continue
     LINK_PATH="$PROJECT_ROOT/$path"
     if [ "$enabled" = "True" ] || [ "$enabled" = "true" ]; then
       if [ ! -L "$LINK_PATH" ]; then
@@ -1069,7 +1076,7 @@ cmd_export() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --all) ALL_MODE="true"; shift ;;
-      *) shift ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
     esac
   done
 
@@ -1159,9 +1166,12 @@ cmd_export() {
 cmd_list() {
   require_config
   require_python
+  local agents
+  agents=$(get_agents) || return $?
   echo -e "${BOLD}[ctx list] Agents${NC}"
   echo ""
-  get_agents | while IFS="|" read -r name path enabled; do
+  printf '%s\n' "$agents" | while IFS="|" read -r name path enabled; do
+    [ -n "$name$path$enabled" ] || continue
     if [ "$enabled" = "True" ] || [ "$enabled" = "true" ]; then
       echo -e "  ${GREEN}●${NC} $name  →  $path"
     else
@@ -1209,8 +1219,8 @@ for a in d["agent_rules"]:
         changed.append(a["name"])
 
 if not changed:
-    print(f"  ✗ Agent '{name}' not found.")
-    print(f"  Available: {[a['name'] for a in d['agent_rules']]}")
+    available = [a["name"] for a in d["agent_rules"]]
+    raise ValueError(f"Agent {name!r} not found. Available: {available}")
 
 write_config(d)
 label = "enabled" if state else "disabled"
@@ -1362,6 +1372,7 @@ cmd_log() {
         echo "Usage: bash ctx.sh log --summary \"...\" [--title \"...\"] [--commit <id>] [--files a,b] [--type work|docs|release]"
         return 0
         ;;
+      -*) echo "Unknown option: $1" >&2; return 1 ;;
       *)
         if [ -z "$SUMMARY" ]; then SUMMARY="$1"; else SUMMARY="$SUMMARY $1"; fi
         shift
@@ -1470,6 +1481,10 @@ cmd_timeline() {
     esac
   done
 
+  case "$LIMIT" in
+    ''|*[!0-9]*) echo "Error: --limit requires a non-negative integer." >&2; return 1 ;;
+  esac
+
   local LOG_FILE="$CONTEXT_DIR/work-log/timeline.jsonl"
   if [ ! -f "$LOG_FILE" ]; then
     echo "No work-log entries yet. Add one with: bash ctx.sh log --summary \"what changed\""
@@ -1550,6 +1565,10 @@ cmd_backfill() {
       *) echo "Unknown option: $1"; return 1 ;;
     esac
   done
+
+  case "$LIMIT" in
+    ''|*[!0-9]*) echo "Error: --limit requires a non-negative integer." >&2; return 1 ;;
+  esac
 
   if ! git -C "$PROJECT_ROOT" rev-parse HEAD >/dev/null 2>&1; then
     echo -e "${YELLOW}No Git commits found to backfill.${NC}"
@@ -2295,7 +2314,7 @@ cmd_version() {
 
 # ── main ───────────────────────────────────────────────
 case "${1:-help}" in
-  init)    cmd_init "$@" ;;
+  init)    cmd_init "${@:2}" ;;
   status)  cmd_status ;;
   sync)    cmd_sync ;;
   export)  cmd_export "${@:2}" ;;
@@ -2310,5 +2329,6 @@ case "${1:-help}" in
   hook)     cmd_hook "${@:2}" ;;
   _hook_run_pre_commit) _hook_run_pre_commit ;;
   version) cmd_version ;;
-  help|--help|-h|*) cmd_help ;;
+  help|--help|-h) cmd_help ;;
+  *) echo "Unknown command: $1" >&2; cmd_help; exit 1 ;;
 esac
