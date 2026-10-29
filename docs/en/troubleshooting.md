@@ -174,6 +174,8 @@ Tracked agent symlinks and ignored context are separate decisions: a symlink sto
 
 ## Invalid JSONL, permission errors, or a failed log
 
+`Git rev-parse failed`, `Git branch failed`, `Git status failed`, `Git show failed`, `Git log failed`, or `Git diff failed` means a metadata query failed. The command exits nonzero before adding a row or rewriting the active log, rather than treating the failure as a clean project or an empty file list. A broken `.git` directory or file is an error; standalone logging is reserved for projects without a repository or Git executable. Inspect the accompanying Git error and repository/index permissions, then check the existing timeline before retrying. A Git query error in the installed auto-log hook also blocks the outer project commit.
+
 Writers reject malformed JSONL with a filename and line number, for example `invalid JSON at line 2` or `expected a JSON object at line 1`. Each nonblank line must be a JSON object. `null`, arrays, and strings are invalid records. Blank lines are ignored; a valid last record without a trailing newline is supported.
 
 Stop writers, back up the context, and inspect the indicated line in a local editor. Restore a known valid record or make a reviewed correction from original evidence. Do not silently drop invalid rows, invent replacement history, or truncate the file. `archive` also validates existing monthly archives; the problem may be in `archive/timeline-YYYY-MM.jsonl` rather than the hot log.

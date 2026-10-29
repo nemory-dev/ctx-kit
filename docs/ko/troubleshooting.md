@@ -174,6 +174,8 @@ git diff --cached --name-only
 
 ## 잘못된 JSONL, 권한 오류, 로그 실패
 
+`Git rev-parse failed`, `Git branch failed`, `Git status failed`, `Git show failed`, `Git log failed`, `Git diff failed`는 메타데이터 조회 실패를 뜻합니다. 오류를 변경 없는 프로젝트나 빈 파일 목록으로 처리하지 않고, 행 추가나 활성 로그 재작성 전에 0이 아닌 코드로 종료합니다. 손상된 `.git` 디렉터리·파일도 오류이며, 저장소나 Git 실행 파일이 없는 프로젝트에서만 독립 로그 기록으로 처리합니다. 함께 출력한 Git 오류와 저장소·인덱스 권한을 확인하고, 기존 타임라인을 살펴본 뒤 재시도하세요. 설치된 자동 기록 훅의 Git 조회 오류는 바깥의 프로젝트 커밋도 막습니다.
+
 쓰기 명령은 잘못된 JSONL에 대해 파일명과 줄 번호를 보고합니다. 예: `invalid JSON at line 2`, `expected a JSON object at line 1`. 비어 있지 않은 각 줄은 JSON 객체여야 합니다. `null`, 배열, 문자열은 올바른 레코드가 아닙니다. 빈 줄은 무시하며 마지막 줄의 개행이 없어도 유효한 객체라면 지원합니다.
 
 쓰기 작업을 멈추고 컨텍스트를 백업한 뒤 로컬 편집기로 해당 줄을 확인하세요. 정상 레코드를 복원하거나 원래 증거를 바탕으로 검토한 수정을 하세요. 잘못된 줄을 조용히 버리거나, 이력을 지어내거나, 파일을 잘라내지 마세요. `archive`는 기존 월별 아카이브도 검증하므로 문제가 hot 로그 대신 `archive/timeline-YYYY-MM.jsonl`에 있을 수 있습니다.

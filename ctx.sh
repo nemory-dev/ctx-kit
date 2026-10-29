@@ -66,10 +66,49 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import time
 from contextlib import contextmanager
+
+
+def git_output(root, args, allow_no_repository=False, allow_unborn_head=False):
+    # Decode bytes directly: text mode would translate CR/LF in file names.
+    env = dict(os.environ, LC_ALL="C") if allow_no_repository else None
+    try:
+        result = subprocess.run(["git", "-C", root, *args], env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        if allow_no_repository:
+            return None
+        raise
+    if result.returncode:
+        # --verify --quiet HEAD returns 1 without diagnostics before the first commit.
+        if allow_unborn_head and result.returncode == 1 and not result.stderr:
+            return None
+        no_repository = result.stderr.startswith((
+            b"fatal: not a git repository (or any of the parent directories):",
+            b"fatal: not a git repository (or any parent up to mount point ",
+        ))
+        if allow_no_repository and no_repository and not os.environ.get("GIT_DIR"):
+            # Broken .git markers must not turn a repository error into standalone mode.
+            directory = os.path.abspath(root)
+            while not os.path.lexists(os.path.join(directory, ".git")):
+                parent = os.path.dirname(directory)
+                if parent == directory:
+                    return None
+                directory = parent
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"Git {args[0]} failed: {detail}")
+    return result.stdout.decode("utf-8")
+
+
+def git_paths(root, args):
+    output = git_output(root, args)
+    if output and not output.endswith("\0"):
+        raise ValueError("Incomplete NUL-delimited Git file list")
+    return [path for path in output.split("\0") if path]
 
 
 def read_jsonl(path):
@@ -1415,7 +1454,6 @@ cmd_log() {
   CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_SUMMARY="$SUMMARY" CTX_TITLE="$TITLE" CTX_COMMIT="$COMMIT" CTX_FILES="$FILES" CTX_TYPE="$TYPE" CTX_COMMAND="$CTX_COMMAND" context_python << 'PYEOF'
 import json
 import os
-import subprocess
 from uuid import uuid4
 from datetime import datetime, timezone
 
@@ -1430,31 +1468,47 @@ files = [f.strip() for f in os.environ["CTX_FILES"].split(",") if f.strip()]
 entry_type = os.environ["CTX_TYPE"].strip() or "work"
 ctx_command = os.environ["CTX_COMMAND"].strip() or "bash ctx.sh"
 
-def git(args, default="", strip=True):
-    try:
-        output = subprocess.check_output(["git", "-C", root, *args], text=True, stderr=subprocess.DEVNULL)
-        return output.strip() if strip else output
-    except Exception:
-        return default
-
-branch = git(["branch", "--show-current"], "")
-status_args = ["status", "--porcelain", "--", "."]
+status_args = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."]
 lock_path = os.path.relpath(os.path.join(os.environ["CTX_STORAGE_DIR"], "work-log", ".ctx.lock"), root)
 if not (lock_path == ".." or lock_path.startswith(".." + os.sep)):
     status_args.append(":(exclude,literal)" + lock_path.replace(os.sep, "/"))
-status = git(status_args, "", strip=False)
+probe = git_output(root, ["rev-parse", "--is-inside-work-tree"], allow_no_repository=True)
+in_worktree = probe is not None and probe.strip() == "true"
+branch = git_output(root, ["branch", "--show-current"]).strip() if in_worktree else ""
+status = git_output(root, status_args) if in_worktree else ""
 dirty = bool(status)
 
+full_commit = None
 if not commit:
-    commit = "uncommitted" if dirty else git(["rev-parse", "--short", "HEAD"], "uncommitted")
+    commit = "uncommitted"
+    if in_worktree and not dirty:
+        full_commit = git_output(root, ["rev-parse", "--verify", "--quiet", "HEAD"],
+                                 allow_unborn_head=True)
+        if full_commit is not None:
+            full_commit = full_commit.strip()
+            commit = git_output(root, ["rev-parse", "--short", full_commit]).strip()
 
-full_commit = git(["rev-parse", commit], commit) if commit != "uncommitted" else "uncommitted"
+if commit == "uncommitted":
+    full_commit = "uncommitted"
+elif full_commit is None:
+    full_commit = git_output(root, ["rev-parse", "--verify", "--end-of-options", commit]).strip()
+else:
+    full_commit = full_commit.strip()
 
 if not files and commit != "uncommitted":
-    changed = git(["show", "--name-only", "--format=", commit], "")
-    files = [line for line in changed.splitlines() if line.strip()]
+    files = git_paths(root, ["show", "--name-only", "--format=", "-z", full_commit, "--"])
 elif not files:
-    files = [line[3:] for line in status.splitlines() if len(line) > 3]
+    records = iter(status.split("\0"))
+    for record in records:
+        if not record:
+            continue
+        if len(record) < 4 or record[2] != " ":
+            raise ValueError("Invalid Git status record")
+        files.append(record[3:])
+        # Porcelain -z lists the destination before the source for a rename/copy.
+        if "R" in record[:2] or "C" in record[:2]:
+            if not next(records, None):
+                raise ValueError("Incomplete Git rename/copy status record")
 
 entry = {
     "id": str(uuid4()),
@@ -1648,44 +1702,35 @@ if legacy_commits:
         if kind == "commit" and object_id.startswith(reference.lower()):
             existing_commits.add(object_id)
 
-git_cmd = ["git", "-C", root, "log", "--date=iso-strict"]
+git_cmd = ["log", "-z", "--date=iso-strict", "--encoding=UTF-8", "--no-show-signature", "--no-notes"]
 if not all_mode:
     git_cmd.extend(["-n", str(limit)])
 
-git_cmd.extend(["--format=__CTX_COMMIT_START__%n%H%n%h%n%ad%n%s%n%b%n__CTX_FILES__", "--name-only"])
+git_cmd.extend(["--format=%x00%H%x00%h%x00%ad%x00%s%x00%b", "--name-only"])
 
-try:
-    raw_log = subprocess.check_output(git_cmd, text=True, stderr=subprocess.DEVNULL)
-except Exception as e:
-    print(f"Error reading git log: {e}")
-    raise SystemExit(1)
-
-raw_commits = raw_log.split("__CTX_COMMIT_START__\n")
+fields = git_output(root, git_cmd).split("\0")
 new_entries = []
+index = 0
 
-for block in raw_commits:
-    block = block.strip()
-    if not block:
-        continue
-
-    parts = block.split("__CTX_FILES__\n")
-    header_part = parts[0].strip()
-    files_part = parts[1].strip() if len(parts) > 1 else ""
-
-    lines = header_part.splitlines()
-    if len(lines) < 4:
-        continue
-
-    full_commit = lines[0].strip()
-    short_commit = lines[1].strip()
-    date_str = lines[2].strip()
-    subject = lines[3].strip()
-    body = "\n".join(lines[4:]).strip() if len(lines) > 4 else ""
+while index < len(fields) - 1:
+    if fields[index] != "" or index + 6 >= len(fields):
+        raise ValueError("Invalid NUL-delimited Git commit record")
+    full_commit, short_commit, date_str, subject, body = fields[index + 1:index + 6]
+    body = body.strip()
+    index += 6
+    files = []
+    if fields[index]:
+        # Git inserts one formatting newline before the first path, even with -z.
+        if not fields[index].startswith("\n"):
+            raise ValueError("Invalid Git commit file-list separator")
+        files.append(fields[index][1:])
+        index += 1
+        while index < len(fields) and fields[index]:
+            files.append(fields[index])
+            index += 1
 
     if full_commit in existing_commits or short_commit in existing_commits:
         continue
-
-    files = [f.strip() for f in files_part.splitlines() if f.strip()]
 
     try:
         dt = datetime.fromisoformat(date_str)
@@ -2315,36 +2360,27 @@ print("{}|{}".format(gs.get("enabled", False), gs.get("auto_log", False)))' "$(p
   fi
 
   if [ "$cfg_autolog" = "True" ]; then
-    local staged_files
-    staged_files=$(git -C "$PROJECT_ROOT" diff --cached --name-only 2>/dev/null || true)
-    staged_files=$(echo "$staged_files" | grep -v -E "^\s*$" | grep -v "^${rel_context_dir}/" || true)
+    local LOG_DIR="$CONTEXT_DIR/work-log"
+    local LOG_FILE="$LOG_DIR/timeline.jsonl"
+    mkdir -p "$LOG_DIR"
 
-    if [ -n "$staged_files" ]; then
-      local LOG_DIR="$CONTEXT_DIR/work-log"
-      local LOG_FILE="$LOG_DIR/timeline.jsonl"
-      mkdir -p "$LOG_DIR"
-
-      CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" context_python << 'PYEOF'
-import json
+    CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" context_python << 'PYEOF'
 import os
-import subprocess
 from uuid import uuid4
 from datetime import datetime, timezone
 
 root = os.environ["CTX_ROOT"]
 log_file = os.environ["CTX_LOG_FILE"]
 
-def git(args):
-    try:
-        return subprocess.check_output(["git", "-C", root, *args], text=True, stderr=subprocess.DEVNULL).strip()
-    except Exception:
-        return ""
-
-diff_stat = git(["diff", "--cached", "--stat"])
-staged_names = [f.strip() for f in git(["diff", "--cached", "--name-only"]).splitlines() if f.strip()]
-branch = git(["branch", "--show-current"])
+diff_args = ["diff", "--cached", "--", "."]
+context_relative = os.path.relpath(os.environ["CTX_STORAGE_DIR"], root)
+if not (context_relative == ".." or context_relative.startswith(".." + os.sep)):
+    diff_args.append(":(exclude,literal)" + context_relative.replace(os.sep, "/") + "/")
+staged_names = git_paths(root, diff_args[:2] + ["--name-only", "-z"] + diff_args[2:])
 
 if staged_names:
+    diff_stat = git_output(root, diff_args[:2] + ["--stat"] + diff_args[2:]).strip()
+    branch = git_output(root, ["branch", "--show-current"]).strip()
     short_files = staged_names[:3]
     file_summary = ", ".join(os.path.basename(f) for f in short_files)
     if len(staged_names) > 3:
@@ -2363,7 +2399,7 @@ if staged_names:
         "commit": "pending",
         "fullCommit": "pending",
         "branch": branch,
-        "dirty": False,
+        "dirty": True,
         "files": staged_names,
     }
 
@@ -2371,7 +2407,6 @@ if staged_names:
 
     print(f"[ctx] 📝 Auto-recorded work-log before commit: {title}")
 PYEOF
-    fi
   fi
 
   if [ -d "$CONTEXT_DIR/.git" ]; then

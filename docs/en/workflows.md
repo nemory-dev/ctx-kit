@@ -69,6 +69,10 @@ Read-only reviews need no context edits or work-log entry. Explicit no-logging o
 
 Without `--commit`, `log` records `uncommitted` when Git reports changes; otherwise it uses the current short commit when available. Without `--files`, it derives paths from that commit or the working tree. These are metadata defaults, so explicit relevant paths help keep the record accurate. Logging does not create a project commit.
 
+Automatic paths preserve Unicode, whitespace, line breaks, quotes, and backslashes rather than Git display escaping. Working-tree renames and copies use the destination path. Untracked directories are expanded into file paths even when `status.showUntrackedFiles` hides them by default; the runtime lock remains excluded. A failed Git status or commit-file query stops logging before adding a row. Logging outside a Git repository remains supported.
+
+Commit references are resolved before writing, including when `--files` is explicit. An invalid reference fails without adding a row. For a clean project, or an explicit commit, file names are read from the resolved full hash so a concurrent HEAD update cannot change which commit supplies them. A repository without its first commit still records `uncommitted`.
+
 ## Find recent work or import Git history
 
 ```bash
@@ -93,6 +97,8 @@ bash ctx.sh timeline --limit 5 --json
 ```
 
 `backfill` imports Git commit messages, dates, and file names. It cannot reconstruct uncommitted work or validation results that were not recorded in Git.
+
+File paths and commit fields are read with NUL separators, so unusual file names and message text such as `__CTX_FILES__` or `__CTX_COMMIT_START__` do not split or truncate imported records. Empty commits keep an empty file list.
 
 | Option | Meaning |
 | --- | --- |
@@ -216,6 +222,8 @@ New ignore rules are anchored at the project root and escape pattern characters 
 An existing hook is saved as `.git/hooks/pre-commit.ctx-kit-original`, preserving its contents, permissions, and any symlink. The wrapper runs an executable original first with the same working directory, arguments, and input. A nonzero exit blocks the commit and skips ctx-kit; a successful exit allows ctx-kit to run. A non-executable original remains saved and is skipped. Reinstalling an unchanged wrapper is safe; reinstalling an older inline integration migrates the known ctx-kit block while retaining the rest of the hook.
 
 With `git_sync.enabled` and `auto_log` both `true`, a normal project commit attempt can append a log **before** the commit. Its title uses staged file names and its summary contains a staged diff stat. It uses `pending` for both commit fields; it does not later attach the real commit hash or produce a semantic AI summary. A later hook or the commit itself can fail, leaving the pre-commit entry in place. Use the explicit work-unit closure workflow for validation results and outcomes.
+
+These pending entries have `dirty: true`. Staged paths preserve their actual names, and both the file list and diff stat exclude the configured context directory literally, including already tracked context files. A context-only change adds no auto-log. Git metadata query errors stop the hook before adding a row and block the project commit; fix the reported cause before retrying.
 
 The installed hook also snapshots context changes in the independent local Git repository. Context Git commands clear inherited repository-local Git environment variables so they use the context repository's own index; project inspection keeps the commit's active index, including `git commit --only`. ctx-kit contains no remote push step, but local Git and ignore rules are not a secrecy guarantee: already tracked files, separately configured remotes, exports, and generated bundles still require review.
 
