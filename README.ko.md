@@ -36,6 +36,14 @@ bash ctx.sh timeline --limit 1 --json
 
 반환된 항목에서 같은 요약과 파일 경로를 확인할 수 있습니다. 에이전트와 사용하기 전에 생성된 파일의 프로젝트명, 기술 스택, 현재 상태, 다음 행동을 실제 내용으로 바꾸세요.
 
+계획, 문서, 활성·보관 작업 기록을 오프라인 HTML 하나로 열람합니다.
+
+```bash
+bash ctx.sh view --open
+```
+
+기본 출력은 `<context>/generated/view.html`입니다. 원본 변경 후 명령을 다시 실행하세요. 브라우저 새로고침은 저장된 스냅샷만 다시 읽습니다. HTML에는 전체 기록이 포함되므로 공유 전 비공개 내용을 검토하세요. [뷰어 사용 흐름](docs/ko/workflows.md#오프라인-컨텍스트-스냅샷-열람하기)을 참고하세요.
+
 ## 컨텍스트 구성
 
 ```text
@@ -79,6 +87,7 @@ project/
 | `bash ctx.sh enable Cursor` / `disable Cursor` | 에이전트 활성화 설정 변경 후 sync 실행 |
 | `bash ctx.sh log --summary "..."` | 작업 단위 기록. `record`도 같은 명령 |
 | `bash ctx.sh timeline --limit 20` | 현재 타임라인 조회 |
+| `bash ctx.sh view --open` | 오프라인 컨텍스트 스냅샷 생성 후 브라우저 열기 |
 | `bash ctx.sh backfill --limit 30` | 최근 Git 커밋을 현재 타임라인으로 가져오기 |
 | `bash ctx.sh archive --keep 30` | 완료 작업, 폐기된 결정, 오래된 로그 보관 |
 | `bash ctx.sh export` | 검토 후 수동 공유할 컨텍스트 출력 |

@@ -1,0 +1,5 @@
+{
+  "title": "</script><script>globalThis.ctxAttack=1</script>",
+  "summary": "<img src=https://example.invalid/tracker onerror=globalThis.ctxAttack=2> & \"quote\" \u2028 \u2029",
+  "markdown": "# 문서\n\n## 현재 상태\n그대로 보존 <script>globalThis.ctxAttack=3</script>\n\n## 다음 행동\n- [ ] [위험](javascript:alert(1))\n- [ ] ![외부 이미지](https://example.invalid/image.png)\n\n[정상](https://example.invalid/docs)\n\n| column | value |\n| --- | --- |\n| raw | text |\n"
+}

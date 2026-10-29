@@ -492,6 +492,7 @@ cmd_help() {
   printf "  %-20s %s\n" "generate <type>" "Collect files for LLM context (e.g. generate policy)"
   printf "  %-20s %s\n" "log"            "Record a commit/work-unit summary into context work-log"
   printf "  %-20s %s\n" "timeline"       "Show recorded work-log entries by commit/work unit"
+  printf "  %-20s %s\n" "view"           "Generate an offline HTML context snapshot (--open to browse)"
   printf "  %-20s %s\n" "backfill"       "Backfill past Git commits into context work-log"
   printf "  %-20s %s\n" "archive"        "Archive completed tasks, deprecated ADRs & split logs"
   printf "  %-20s %s\n" "hook [cmd]"     "Manage Git pre-commit hook (install|uninstall|status)"
@@ -518,6 +519,7 @@ cmd_help() {
   echo "  bash ctx.sh export          # Copy context for web LLM"
   echo "  bash ctx.sh log --summary \"Implemented feedback MVP\""
   echo "  bash ctx.sh timeline --limit 10"
+  echo "  bash ctx.sh view --open     # Browse a local context snapshot"
   echo "  bash ctx.sh backfill --limit 30 # Backfill past commits"
   echo "  bash ctx.sh archive         # Compact context & archive completed tasks"
   echo "  bash ctx.sh hook install    # Install Git pre-commit auto-sync hook"
@@ -2419,6 +2421,1629 @@ PYEOF
   exit 0
 }
 
+# ── view ───────────────────────────────────────────────
+cmd_view() {
+  local view_output="" view_open="0"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help|-h)
+        echo "Usage: bash ${SCRIPT_PATH#$PROJECT_ROOT/} view [--output PATH.html] [--open]"
+        echo "Generate one offline HTML snapshot from context documents and work logs."
+        echo "  --output PATH  Project-relative or in-project absolute .html path"
+        echo "                 Default: <context>/generated/view.html"
+        echo "  --open         Open the generated snapshot in the default browser"
+        echo "Regenerate to refresh. The HTML contains full logs; review before sharing."
+        return 0
+        ;;
+      --output)
+        if [ "$#" -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+          echo "Error: --output requires a non-empty .html path." >&2
+          return 1
+        fi
+        view_output="$2"
+        shift 2
+        ;;
+      --open) view_open="1"; shift ;;
+      *) echo "Error: unknown view argument: $1" >&2; return 1 ;;
+    esac
+  done
+  require_config
+  require_python
+  CONTEXT_DIR=$(ctx_python - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" <<'PYEOF'
+import json
+import os
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        config = json.load(stream)
+    if not isinstance(config, dict):
+        raise ValueError("ctx.config.json must contain an object")
+    source = config.get("source", "sample-context/AGENT_RULES.md")
+    if not isinstance(source, str) or not source or "\0" in source:
+        raise ValueError("Configuration source must be a non-empty path")
+    sys.stdout.reconfigure(newline="\n")
+    print(os.path.abspath(os.path.join(sys.argv[2], os.path.dirname(source) or "sample-context")))
+except (OSError, ValueError, RecursionError) as error:
+    print("Error: {}".format(error), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+  ) || return $?
+  CTX_VIEW_PROJECT="$(py_path "$PROJECT_ROOT")" CTX_VIEW_CONFIG="$(py_path "$CONFIG")" \
+    CTX_VIEW_SCRIPT="$(py_path "$SCRIPT_PATH")" CTX_VIEW_OUTPUT="$view_output" \
+    CTX_VIEW_OPEN="$view_open" context_python --read-only <<'PYEOF'
+# CTX_VIEW_IMPLEMENTATION_START
+# Viewer sources are read under the existing writer lock without recovery.
+import datetime
+import math
+import re
+
+
+VIEW_INPUT_BYTES = 20 * 1024 * 1024
+VIEW_ENTRY_LIMIT = 20000
+VIEW_DOCUMENTS = (
+    ("plan", "MASTER_PLAN.md"), ("decisions", "decisions.md"),
+    ("backlog", "backlog.md"), ("digest", "work-log/timeline-digest.md"),
+    ("completed", "archive/completed-tasks.md"),
+    ("deprecated", "archive/decisions-deprecated.md"),
+)
+
+
+def _view_now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _view_warning(code, message, source=None):
+    return {"code": code, "message": message, "source": source}
+
+
+def _view_inside(root, path):
+    try:
+        return os.path.commonpath([root, os.path.realpath(path)]) == root
+    except ValueError:
+        return False
+
+
+def _view_check_input_path(context, relative):
+    path = context
+    parts = relative.split("/")
+    for index, part in enumerate(parts):
+        path = os.path.join(path, part)
+        if not _view_inside(context, path):
+            raise ValueError("Viewer input is outside context: " + relative)
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(info.st_mode):
+            raise ValueError("Viewer refuses symbolic-link input: " + relative)
+        if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
+            raise ValueError("Viewer input parent is not a directory: " + relative)
+        if index == len(parts) - 1 and not stat.S_ISREG(info.st_mode):
+            raise ValueError("Viewer input is not a regular file: " + relative)
+
+
+def _view_read_regular(path, label, limit):
+    try:
+        initial = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(initial.st_mode):
+        raise ValueError("Viewer input is not a regular file: " + label)
+    if initial.st_size > limit:
+        raise ValueError("Viewer input exceeds 20 MiB limit: " + label)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(opened.st_mode)
+                or (initial.st_dev, initial.st_ino) != (opened.st_dev, opened.st_ino)):
+            raise ValueError("Viewer input changed while opening: " + label)
+        data = stream.read(limit + 1)
+        finished = os.fstat(stream.fileno())
+    if len(data) > limit:
+        raise ValueError("Viewer input exceeds 20 MiB limit: " + label)
+    fingerprint = (finished.st_dev, finished.st_ino, finished.st_size,
+                   finished.st_mtime_ns, finished.st_ctime_ns,
+                   hashlib.sha256(data).digest())
+    # A subsequent complete read also checks replacement and same-size edits.
+    return data, fingerprint
+
+
+def _view_source_paths(context):
+    for name in ("work-log", "archive"):
+        path = os.path.join(context, name)
+        if os.path.lexists(path):
+            info = os.lstat(path)
+            if not stat.S_ISDIR(info.st_mode):
+                raise ValueError("Viewer input directory is not a real directory: " + name)
+    paths = [relative for _, relative in VIEW_DOCUMENTS]
+    paths.append("work-log/timeline.jsonl")
+    archive = os.path.join(context, "archive")
+    if os.path.isdir(archive):
+        paths.extend("archive/" + name for name in sorted(os.listdir(archive))
+                     if name.startswith("timeline-") and name.endswith(".jsonl"))
+    return paths
+
+
+def _view_read_sources(context, config_path):
+    paths = _view_source_paths(context)
+    result = {}
+    total = 0
+    config = _view_read_regular(config_path, "ctx.config.json", VIEW_INPUT_BYTES)
+    if config is None:
+        raise ValueError("ctx.config.json is missing; run bash ctx.sh init")
+    total += len(config[0])
+    for relative in paths:
+        _view_check_input_path(context, relative)
+        read = _view_read_regular(os.path.join(context, *relative.split("/")), relative,
+                                  max(0, VIEW_INPUT_BYTES - total))
+        result[relative] = read
+        if read is not None:
+            total += len(read[0])
+    return paths, config, result
+
+
+def _view_decode(data, label):
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        number = data[:error.start].count(b"\n") + 1
+        raise ValueError("{}: invalid UTF-8 at line {}".format(label, number)) from error
+
+
+def _view_json_constant(value):
+    raise ValueError("Non-standard JSON constant: " + value)
+
+
+def _view_json_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("Out-of-range JSON number: " + value)
+    return number
+
+
+def _view_commit_ref(record):
+    commit = record.get("commit")
+    if isinstance(commit, str) and commit:
+        return commit
+    if commit is not None and not isinstance(commit, str):
+        return None
+    full_commit = record.get("fullCommit")
+    return full_commit if isinstance(full_commit, str) and full_commit else None
+
+
+def collect_snapshot(project_root, context_dir, config_path, output_path):
+    project = os.path.realpath(os.fspath(project_root))
+    context = os.path.realpath(os.fspath(context_dir))
+    config_path = os.path.abspath(os.fspath(config_path))
+    if not _view_inside(project, context):
+        raise ValueError("Viewer context must be inside the project")
+    if not os.path.isdir(context):
+        raise ValueError("Context directory is missing; run bash ctx.sh init")
+    started = _view_now()
+    # Validate parents and lock before context_lock can create or open anything.
+    _view_source_paths(context)
+    _view_check_input_path(context, "work-log/.ctx.lock")
+    for attempt in range(2):
+        with context_lock():
+            journal = os.path.join(context, "work-log", ".ctx-archive-transaction.json")
+            if os.path.lexists(journal):
+                raise ValueError("Incomplete archive transaction: work-log/.ctx-archive-transaction.json. "
+                                 "Viewer will not recover it; follow the archive recovery guide before retrying.")
+            first = _view_read_sources(context, config_path)
+            second = _view_read_sources(context, config_path)
+            if first != second:
+                if attempt == 0:
+                    continue
+                raise ValueError("Viewer sources changed during collection; retry after editing stops")
+            paths, config_data, source_data = first
+            config_text = _view_decode(config_data[0], "ctx.config.json")
+            try:
+                config = json.loads(config_text, parse_constant=_view_json_constant, parse_float=_view_json_float)
+            except (ValueError, RecursionError) as error:
+                raise ValueError("Invalid viewer configuration: " + str(error)) from error
+            if not isinstance(config, dict):
+                raise ValueError("Viewer configuration must be a JSON object")
+            source = config.get("source", "sample-context/AGENT_RULES.md")
+            if not isinstance(source, str) or not source:
+                raise ValueError("Viewer configuration source must be a nonempty string")
+            selected = os.path.dirname(source) or "sample-context"
+            configured_context = os.path.realpath(os.path.join(project, selected))
+            if configured_context != context:
+                raise ValueError("Viewer configuration changed context; retry the command")
+            break
+    documents = []
+    for key, relative in VIEW_DOCUMENTS:
+        content = source_data[relative]
+        documents.append({"key": key, "path": relative, "sourceKind": "document",
+                          "status": "present" if content is not None else "missing",
+                          "text": _view_decode(content[0], relative) if content is not None else ""})
+    entries = []
+    for relative in paths:
+        if not relative.endswith(".jsonl") or source_data[relative] is None:
+            continue
+        text = _view_decode(source_data[relative][0], relative)
+        for number, line in enumerate(text.split("\n"), 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line, parse_constant=_view_json_constant, parse_float=_view_json_float)
+            except (ValueError, RecursionError) as error:
+                raise ValueError("{}: invalid JSON at line {}: {}".format(relative, number, error)) from error
+            if not isinstance(record, dict):
+                raise ValueError("{}: expected a JSON object at line {}".format(relative, number))
+            entries.append({"key": "{}:{}".format(relative, number), "sourceKind": "work_log",
+                            "sourcePath": relative, "sourceLine": number, "record": record,
+                            "recordText": line})
+            if len(entries) > VIEW_ENTRY_LIMIT:
+                raise ValueError("Viewer exceeds 20000 work-log entries; no records were omitted")
+    refs = sorted({ref for ref in (_view_commit_ref(entry["record"]) for entry in entries)
+                   if ref is not None and ref not in ("pending", "uncommitted")})
+    protected = [config_path] + [os.path.join(context, *path.split("/")) for path in paths]
+    script = os.environ.get("CTX_VIEW_SCRIPT", os.path.join(project, "ctx.sh"))
+    protected.extend([script, os.path.join(context, "work-log", ".ctx.lock"), journal])
+    return {"project": {"name": os.path.basename(project),
+                        "contextPath": os.path.relpath(context, project).replace(os.sep, "/")},
+            "documents": documents, "entries": entries, "warnings": [],
+            "collectionStartedAt": started, "collectionFinishedAt": _view_now(),
+            "protectedInputs": protected,
+            "excludedPaths": [os.path.abspath(os.fspath(output_path)),
+                              os.path.realpath(os.fspath(output_path)),
+                              os.path.join(context, "work-log", ".ctx.lock")],
+            "commitRefs": refs}
+
+
+def _view_git_changes(raw):
+    if raw and not raw.endswith(b"\0"):
+        raise ValueError("Incomplete NUL-delimited Git status")
+    fields = raw.split(b"\0")
+    changes = []
+    index = 0
+    while index < len(fields) - 1:
+        item = fields[index]
+        index += 1
+        if len(item) < 4 or item[2:3] != b" ":
+            raise ValueError("Malformed Git status record")
+        status_text = item[:2].decode("ascii")
+        path = item[3:].decode("utf-8")
+        previous = None
+        if "R" in status_text or "C" in status_text:
+            if index >= len(fields) - 1:
+                raise ValueError("Incomplete Git rename/copy status")
+            previous = fields[index].decode("utf-8")
+            index += 1
+        changes.append({"path": path, "status": status_text, "previousPath": previous})
+    return changes
+
+
+def collect_git_snapshot(project_root, excluded_paths, commit_refs):
+    root = os.path.realpath(os.fspath(project_root))
+    result = {"status": "unavailable", "observedAt": _view_now(), "branch": None,
+              "head": None, "changes": [], "commitObjects": {}, "warnings": []}
+    env = os.environ.copy()
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                 "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE",
+                 "GIT_QUARANTINE_PATH", "GIT_IMPLICIT_WORK_TREE"):
+        env.pop(name, None)
+    env.update(LC_ALL="C", GIT_OPTIONAL_LOCKS="0")
+    command = ["git", "-c", "safe.directory=*", "-C", root]
+
+    def query(args, input_data=None, allowed=()):
+        completed = subprocess.run(command + args, env=env, input=input_data,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        if completed.returncode and completed.returncode not in allowed:
+            message = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise ValueError("Git {} failed: {}".format(args[0], message or completed.returncode))
+        return completed
+
+    try:
+        probe = query(["rev-parse", "--is-inside-work-tree"], allowed=(128,))
+        if probe.returncode:
+            directory = root
+            marker = False
+            while True:
+                marker = marker or os.path.lexists(os.path.join(directory, ".git"))
+                parent = os.path.dirname(directory)
+                if parent == directory:
+                    break
+                directory = parent
+            if not marker and probe.stderr.startswith(b"fatal: not a git repository"):
+                result["status"] = "not_repository"
+                return result
+            raise ValueError("Git repository probe failed: " + probe.stderr.decode("utf-8", errors="replace").strip())
+        if probe.stdout.strip() != b"true":
+            result["status"] = "not_repository"
+            return result
+        status_args = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."]
+        for path in excluded_paths:
+            if _view_inside(root, os.fspath(path)):
+                relative = os.path.relpath(os.fspath(path), root).replace(os.sep, "/")
+                status_args.append(":(exclude,literal)" + relative)
+
+        def head():
+            current = query(["rev-parse", "--verify", "--quiet", "HEAD"], allowed=(1,))
+            if current.returncode == 1 and not current.stderr:
+                return None
+            if current.returncode:
+                raise ValueError("Git HEAD query failed: " + current.stderr.decode("utf-8", errors="replace"))
+            return current.stdout.decode("ascii").strip()
+
+        for attempt in range(2):
+            before_head = head()
+            before_status = query(status_args).stdout
+            branch_result = query(["symbolic-ref", "--quiet", "--short", "HEAD"], allowed=(1,))
+            if branch_result.returncode and branch_result.stderr:
+                raise ValueError("Git branch query failed: " + branch_result.stderr.decode("utf-8", errors="replace"))
+            branch = branch_result.stdout.decode("utf-8").rstrip("\n") if not branch_result.returncode else None
+            after_head = head()
+            after_status = query(status_args).stdout
+            if before_head == after_head and before_status == after_status:
+                result.update(status="available", head=before_head, branch=branch,
+                              changes=_view_git_changes(before_status))
+                break
+            if attempt == 1:
+                raise ValueError("Git changed during observation; snapshot is unavailable")
+        if result["head"] is None:
+            result["warnings"].append(_view_warning("git_unborn", "Git HEAD is not recorded yet"))
+        if result["branch"] is None:
+            result["warnings"].append(_view_warning("git_detached", "Git HEAD is detached"))
+        valid_refs = []
+        for ref in sorted(set(commit_refs)):
+            result["commitObjects"][ref] = {"status": "unavailable", "objectId": None}
+            if re.fullmatch(r"[0-9A-Fa-f]{4,64}", ref):
+                valid_refs.append(ref)
+        if valid_refs:
+            try:
+                batch = query(["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+                              ("\n".join(valid_refs) + "\n").encode("ascii"))
+                lines = batch.stdout.decode("ascii").splitlines()
+                if len(lines) != len(valid_refs):
+                    raise ValueError("Incomplete Git commit object batch")
+                for ref, line in zip(valid_refs, lines):
+                    fields = line.split()
+                    if len(fields) == 2 and fields[1] == "commit" and re.fullmatch(r"[0-9a-f]{40,64}", fields[0]):
+                        result["commitObjects"][ref] = {"status": "verified", "objectId": fields[0]}
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                result["warnings"].append(_view_warning("git_commit_query_failed", "Git commit query unavailable: " + str(error)))
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        result.update(status="unavailable", branch=None, head=None, changes=[])
+        message = "Git observation timeout (5 seconds)" if isinstance(error, subprocess.TimeoutExpired) else str(error)
+        result["warnings"].append(_view_warning("git_unavailable", message))
+    result["observedAt"] = _view_now()
+    return result
+
+
+def _view_timestamp(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def build_view_model(snapshot, git_snapshot, generated_at):
+    warnings = list(snapshot.get("warnings", [])) + list(git_snapshot.get("warnings", []))
+    entries = []
+    for original in snapshot["entries"]:
+        item = dict(original)
+        record = item["record"]
+        item["timestampUtc"] = _view_timestamp(record.get("createdAt"))
+        invalid = [name for name in ("createdAt", "type", "title", "summary", "commit", "branch")
+                   if not isinstance(record.get(name), str)]
+        if not isinstance(record.get("files"), list) or not all(isinstance(path, str) for path in record.get("files", [])):
+            invalid.append("files")
+        if not isinstance(record.get("dirty"), bool):
+            invalid.append("dirty")
+        if invalid:
+            warnings.append(_view_warning("legacy_fields", "Line {} has missing or invalid fields: {}. Original record preserved.".format(
+                item["sourceLine"], ", ".join(invalid)), item["sourcePath"]))
+        if item["timestampUtc"] is None:
+            warnings.append(_view_warning("timestamp_unknown", "Line {} has no timezone-aware timestamp".format(item["sourceLine"]), item["sourcePath"]))
+        ref = _view_commit_ref(record)
+        item["commitObjectRef"] = ref
+        if ref is None or ref in ("pending", "uncommitted"):
+            item["commitObjectStatus"] = "not_recorded"
+        else:
+            item["commitObjectStatus"] = git_snapshot["commitObjects"].get(ref, {}).get("status", "unavailable")
+            if item["commitObjectStatus"] != "verified":
+                warnings.append(_view_warning("commit_unavailable", "Line {}: cannot verify recorded commit reference {} in this checkout".format(
+                    item["sourceLine"], ref), item["sourcePath"]))
+        entries.append(item)
+    entries.sort(key=lambda entry: (entry["timestampUtc"] is None,
+                                   -entry["timestampUtc"] if entry["timestampUtc"] is not None else 0,
+                                   entry["sourcePath"], entry["sourceLine"]))
+    return {"viewModelVersion": 1, "generatedAt": generated_at, "project": snapshot["project"],
+            "documents": snapshot["documents"], "entries": entries, "git": git_snapshot,
+            "warnings": warnings, "collectionStartedAt": snapshot["collectionStartedAt"],
+            "collectionFinishedAt": snapshot["collectionFinishedAt"]}
+
+
+# The renderer has no external resources or runtime file reads.
+import base64
+import hashlib
+import json
+
+VIEW_CSS = r""".warning-box summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.warning-box .pagination {
+  max-width: 32rem;
+}
+:root {
+  color-scheme:light;
+  --ink:#182d34;
+  --muted:#52666d;
+  --line:#ced9dc;
+  --paper:#fff;
+  --wash:#f3f6f6;
+  --accent:#086e68;
+  --soft:#e3f3ef;
+  font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+* {
+  box-sizing:border-box;
+}
+body {
+  margin:0;
+  color:var(--ink);
+  background:var(--paper);
+}
+button,input,select {
+  font:inherit;
+  color:inherit;
+}
+button,a,input,select {
+  touch-action:manipulation;
+}
+button {
+  cursor:pointer;
+  background:white;
+  border:1px solid var(--line);
+  border-radius:5px;
+  padding:.45rem .75rem;
+}
+button:hover {
+  background:var(--wash);
+}
+button:disabled {
+  cursor:default;
+  opacity:.48;
+}
+a {
+  color:var(--accent);
+  text-underline-offset:.18em;
+}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {
+  outline:3px solid #10857c;
+  outline-offset:3px;
+}
+h1,h2,h3,h4 {
+  line-height:1.25;
+  margin:0 0 .8rem;
+}
+h1 {
+  font-size:1.6rem;
+  letter-spacing:-.035em;
+}
+h2 {
+  font-size:1.35rem;
+}
+h3 {
+  font-size:1.08rem;
+}
+p {
+  margin:.5rem 0 1rem;
+}
+pre,code {
+  font: .88rem/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+pre {
+  margin:.8rem 0;
+  background:var(--wash);
+  padding:1rem;
+  border:1px solid var(--line);
+  border-radius:5px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+code {
+  background:var(--wash);
+  padding:.1rem .2rem;
+}
+pre code {
+  padding:0;
+}
+header {
+  padding:1.4rem 2rem 1.1rem;
+  border-bottom:1px solid var(--line);
+}
+header .eyebrow {
+  font-size:.75rem;
+  font-weight:700;
+  letter-spacing:.12em;
+  color:var(--accent);
+  margin-bottom:.25rem;
+}
+header p {
+  margin:.25rem 0;
+  font-size:.88rem;
+  color:var(--muted);
+}
+.layout {
+  display:grid;
+  grid-template-columns:11rem minmax(0,1fr);
+  min-height:calc(100vh - 170px);
+}
+nav {
+  border-right:1px solid var(--line);
+  padding:1.5rem 1rem;
+}
+nav button {
+  display:block;
+  width:100%;
+  text-align:left;
+  border:0;
+  margin-bottom:.4rem;
+  color:var(--muted);
+  padding:.65rem .8rem;
+}
+nav button[aria-current=page] {
+  background:var(--soft);
+  color:var(--accent);
+  font-weight:700;
+}
+main {
+  min-width:0;
+  padding:1.7rem 2rem;
+  max-width:1400px;
+  width:100%;
+}
+[hidden] {
+  display:none!important;
+}
+.muted,.source-note {
+  color:var(--muted);
+  font-size:.85rem;
+}
+.source-note {
+  margin-top:.25rem;
+}
+.overview-grid {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:2rem;
+  margin-bottom:1.8rem;
+}
+.overview-section {
+  border-top:3px solid var(--accent);
+  padding-top:1rem;
+  min-width:0;
+}
+.section-heading {
+  display:flex;
+  gap:1rem;
+  justify-content:space-between;
+  align-items:baseline;
+  margin-bottom:.25rem;
+}
+.section-heading button {
+  font-size:.8rem;
+  white-space:nowrap;
+}
+.git-snapshot {
+  border-top:1px solid var(--line);
+  padding:1.2rem 0;
+  margin-bottom:1.5rem;
+}
+.git-snapshot summary {
+  cursor:pointer;
+  color:var(--accent);
+}
+.git-snapshot ul {
+  margin:.5rem 0;
+  padding-left:1.2rem;
+}
+.warning-box {
+  background:#fff7e8;
+  border-left:3px solid #a56a08;
+  padding:.8rem 1rem;
+  margin-bottom:1.5rem;
+}
+.warning-box h2 {
+  font-size:1rem;
+}
+.warning-box ul {
+  padding-left:1.2rem;
+  margin:.4rem 0;
+}
+.filters {
+  display:grid;
+  grid-template-columns:minmax(12rem,2fr) minmax(8rem,1fr) minmax(10rem,1fr) minmax(10rem,1fr);
+  gap:.75rem;
+  margin-bottom:.8rem;
+}
+.field {
+  display:flex;
+  flex-direction:column;
+  gap:.25rem;
+  min-width:0;
+}
+.field label {
+  font-size:.8rem;
+  font-weight:650;
+}
+.field input,.field select {
+  width:100%;
+  border:1px solid var(--line);
+  border-radius:5px;
+  background:white;
+  padding:.5rem .6rem;
+  min-height:2.5rem;
+}
+.file-field {
+  grid-column:1/4;
+}
+.reset-field {
+  align-self:end;
+}
+.filter-meta {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  gap:.5rem;
+  color:var(--muted);
+  font-size:.85rem;
+  margin-bottom:1rem;
+}
+.timeline-grid {
+  display:grid;
+  grid-template-columns:minmax(15rem,.95fr) minmax(18rem,1.2fr);
+  gap:1.5rem;
+  align-items:start;
+}
+.entry-list {
+  display:flex;
+  flex-direction:column;
+  gap:0;
+  border-top:1px solid var(--line);
+}
+.entry-row {
+  display:block;
+  width:100%;
+  text-align:left;
+  border:0;
+  border-bottom:1px solid var(--line);
+  border-radius:0;
+  padding:.85rem .75rem;
+  overflow-wrap:anywhere;
+}
+.entry-row[aria-pressed=true] {
+  background:var(--soft);
+  box-shadow:inset 3px 0 var(--accent);
+}
+.entry-title {
+  display:block;
+  font-weight:650;
+}
+.entry-summary {
+  display:block;
+  font-size:.85rem;
+  color:var(--muted);
+  margin-top:.2rem;
+  white-space:pre-wrap;
+}
+.entry-meta {
+  display:block;
+  font-size:.75rem;
+  color:var(--muted);
+  margin-top:.4rem;
+}
+.entry-detail {
+  min-width:0;
+  background:var(--wash);
+  border:1px solid var(--line);
+  border-radius:5px;
+  padding:1.15rem;
+  overflow-wrap:anywhere;
+}
+.entry-detail h3 {
+  font-size:1.15rem;
+}
+.entry-detail p {
+  white-space:pre-wrap;
+}
+.entry-detail dl {
+  display:grid;
+  grid-template-columns:6rem minmax(0,1fr);
+  gap:.4rem .7rem;
+  font-size:.85rem;
+}
+.entry-detail dt {
+  color:var(--muted);
+}
+.entry-detail dd {
+  margin:0;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+.file-list {
+  list-style:none;
+  padding:0;
+}
+.file-list li {
+  margin:.3rem 0;
+}
+.file-button {
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:.8rem;
+  text-align:left;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  max-width:100%;
+}
+.pagination {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:.6rem;
+  margin-top:1rem;
+  font-size:.85rem;
+}
+.recent-list {
+  border-top:1px solid var(--line);
+}
+.document-toolbar {
+  max-width:32rem;
+  margin-bottom:1.2rem;
+}
+.document-body {
+  max-width:80ch;
+  overflow-wrap:anywhere;
+}
+.document-body p {
+  white-space:pre-wrap;
+}
+.document-body h1,.document-body h2,.document-body h3,.document-body h4,.document-body h5,.document-body h6 {
+  scroll-margin-top:1rem;
+  margin-top:1.5rem;
+}
+.document-body ul,.document-body ol {
+  padding-left:1.6rem;
+}
+.document-body blockquote {
+  border-left:3px solid var(--line);
+  margin:1rem 0;
+  padding:.1rem 1rem;
+  color:var(--muted);
+}
+.document-body li {
+  margin:.25rem 0;
+  white-space:pre-wrap;
+}
+.document-body .raw-block {
+  white-space:pre-wrap;
+}
+.document-body .image-alt {
+  color:var(--muted);
+  font-style:italic;
+}
+.empty-state {
+  padding:1rem 0;
+  color:var(--muted);
+}
+footer {
+  padding:1rem 2rem;
+  border-top:1px solid var(--line);
+  font-size:.8rem;
+  color:var(--muted);
+}
+.skip-link {
+  position:absolute;
+  left:1rem;
+  top:-5rem;
+  background:white;
+  padding:.6rem;
+  z-index:5;
+}
+.skip-link:focus {
+  top:1rem;
+}
+@media(min-width:1000px) {
+  nav {
+    position:sticky;
+    top:0;
+    align-self:start;
+  }
+  .entry-detail {
+    position:sticky;
+    top:1rem;
+    max-height:calc(100vh - 2rem);
+    overflow:auto;
+  }
+}
+@media(max-width:900px) {
+  header {
+    padding:1.2rem;
+  }
+  .layout {
+    grid-template-columns:8.5rem minmax(0,1fr);
+  }
+  nav {
+    padding:1rem .5rem;
+  }
+  main {
+    padding:1.25rem;
+  }
+  .overview-grid {
+    grid-template-columns:1fr;
+    gap:1.5rem;
+  }
+  .timeline-grid {
+    grid-template-columns:1fr;
+  }
+  .filters {
+    grid-template-columns:1fr 1fr;
+  }
+  .file-field {
+    grid-column:1/-1;
+  }
+  .reset-field {
+    grid-column:1/-1;
+  }
+  .entry-detail {
+    position:static;
+  }
+}
+@media(max-width:540px) {
+  :root {
+    font-size:15px;
+  }
+  header {
+    padding:1rem;
+  }
+  .layout {
+    display:block;
+  }
+  nav {
+    display:flex;
+    gap:.3rem;
+    padding:.6rem 1rem;
+    border-right:0;
+    border-bottom:1px solid var(--line);
+  }
+  nav button {
+    margin:0;
+    width:auto;
+    text-align:center;
+    padding:.5rem .7rem;
+  }
+  main {
+    padding:1.1rem 1rem;
+  }
+  .filters {
+    grid-template-columns:1fr 1fr;
+    gap:.6rem;
+  }
+  .search-field {
+    grid-column:1/-1;
+  }
+  .field label {
+    font-size:.75rem;
+  }
+  .section-heading {
+    flex-wrap:wrap;
+    gap:.3rem;
+  }
+  .entry-detail dl {
+    grid-template-columns:1fr;
+    gap:.1rem;
+  }
+  .entry-detail dd {
+    margin-bottom:.4rem;
+  }
+  footer {
+    padding:1rem;
+  }
+  .pagination {
+    flex-wrap:wrap;
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  * {
+    scroll-behavior:auto!important;
+  }
+}
+"""
+
+VIEW_JS = r"""(function () {
+  "use strict";
+  const model = JSON.parse(document.getElementById("ctx-view-data").textContent);
+  const $ = function (id) { return document.getElementById(id); };
+  const text = function (value, fallback) { return typeof value === "string" ? value : (fallback === undefined ? "미기록" : fallback); };
+  const node = function (tag, content, className) {
+    const element = document.createElement(tag);
+    if (content !== undefined) element.textContent = content;
+    if (className) element.className = className;
+    return element;
+  };
+  const clear = function (element) { while (element.firstChild) element.removeChild(element.firstChild); };
+  const normalized = function (value) { return text(value, "").normalize("NFC").toLocaleLowerCase(); };
+  const recordOf = function (entry) { return entry.record && typeof entry.record === "object" && !Array.isArray(entry.record) ? entry.record : {}; };
+  const filesOf = function (entry) { const files = recordOf(entry).files; return Array.isArray(files) ? files.filter(function (f) { return typeof f === "string"; }) : []; };
+  const entries = (Array.isArray(model.entries) ? model.entries : []).slice().sort(function (a, b) {
+    const ta = typeof a.timestampUtc === "number" && Number.isFinite(a.timestampUtc) ? a.timestampUtc : null;
+    const tb = typeof b.timestampUtc === "number" && Number.isFinite(b.timestampUtc) ? b.timestampUtc : null;
+    if (ta !== tb) return ta === null ? 1 : (tb === null ? -1 : tb - ta);
+    const pa = text(a.sourcePath, ""), pb = text(b.sourcePath, "");
+    return (pa < pb ? -1 : (pa > pb ? 1 : 0)) || (a.sourceLine - b.sourceLine);
+  });
+  const documents = Array.isArray(model.documents) ? model.documents : [];
+  const byKey = new Map(entries.map(function (entry) { return [entry.key, entry]; }));
+  const docsByKey = new Map(documents.map(function (doc) { return [doc.key, doc]; }));
+  const typeValues = Array.from(new Set(entries.map(function (entry) { return text(recordOf(entry).type, ""); }).filter(Boolean))).sort();
+  const fileValues = Array.from(new Set([].concat.apply([], entries.map(filesOf)))).sort();
+  const searchValues = new Map(entries.map(function (entry) {
+    const record = recordOf(entry);
+    return [entry.key, normalized([text(record.title, ""), text(record.summary, "")].concat(filesOf(entry)).join("\n"))];
+  }));
+  const labels = {plan:"계획 / MASTER_PLAN", decisions:"결정 / decisions", backlog:"백로그 / backlog", digest:"다이제스트 / timeline digest", completed:"보관된 완료 작업", deprecated:"보관된 결정"};
+  const emptyState = function () { return {tab:"overview", q:"", type:"", from:"", to:"", file:"", entry:"", doc:docsByKey.has("plan") ? "plan" : (documents[0] ? documents[0].key : ""), anchor:"", page:1}; };
+  const validDate = function (value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(value + "T12:00:00");
+    return !Number.isNaN(date.getTime()) && date.getFullYear() === Number(value.slice(0,4)) && date.getMonth() + 1 === Number(value.slice(5,7)) && date.getDate() === Number(value.slice(8,10));
+  };
+  const localDate = function (seconds) {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds)) return null;
+    const date = new Date(seconds * 1000);
+    if (Number.isNaN(date.getTime())) return null;
+    return String(date.getFullYear()).padStart(4,"0") + "-" + String(date.getMonth()+1).padStart(2,"0") + "-" + String(date.getDate()).padStart(2,"0");
+  };
+  const headings = function (source) {
+    const result = [], counts = new Map(); let fence = null;
+    text(source, "").split(/\r?\n/).forEach(function (line, index) {
+      const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (marker) {
+        if (!fence) fence = {char:marker[1][0], length:marker[1].length};
+        else if (marker[1][0] === fence.char && marker[1].length >= fence.length && !line.slice(marker[0].length).trim()) fence = null;
+        return;
+      }
+      if (fence) return;
+      const match = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
+      if (!match) return;
+      const body = match[2].trim();
+      if (!body) return;
+      let end = body.length;
+      while (end > 0 && body[end - 1] === "#") end -= 1;
+      const closing = end > 0 && end < body.length && /\s/.test(body[end - 1]);
+      const title = closing ? body.slice(0, end).trim() : body;
+      const base = normalized(title).replace(/[^\p{L}\p{N}_\-\s]/gu, "").trim().replace(/\s+/g,"-") || "section";
+      const count = counts.get(base) || 0; counts.set(base, count + 1);
+      result.push({line:index, level:match[1].length, title:title, anchor:base + (count ? "-" + count : "")});
+    });
+    return result;
+  };
+  const docHeadings = new Map(documents.map(function (doc) { return [doc.key, headings(doc.text)]; }));
+  const anchorExists = function (key, anchor) { return !anchor || (docHeadings.get(key) || []).some(function (h) { return h.anchor === anchor; }); };
+  const readHash = function () {
+    const defaults = emptyState();
+    try {
+      const raw = location.hash.slice(1);
+      decodeURIComponent(raw);
+      const params = new URLSearchParams(raw);
+      const tabs = ["overview", "timeline", "documents"];
+      if (tabs.indexOf(params.get("tab")) >= 0) defaults.tab = params.get("tab");
+      if (params.has("q")) defaults.q = params.get("q");
+      if (typeValues.indexOf(params.get("type")) >= 0) defaults.type = params.get("type");
+      if (fileValues.indexOf(params.get("file")) >= 0) defaults.file = params.get("file");
+      if (validDate(params.get("from") || "")) defaults.from = params.get("from");
+      if (validDate(params.get("to") || "")) defaults.to = params.get("to");
+      if (defaults.from && defaults.to && defaults.from > defaults.to) { defaults.from = ""; defaults.to = ""; }
+      if (byKey.has(params.get("entry"))) defaults.entry = params.get("entry");
+      if (docsByKey.has(params.get("doc"))) defaults.doc = params.get("doc");
+      if (params.has("anchor") && anchorExists(defaults.doc, params.get("anchor"))) defaults.anchor = params.get("anchor");
+      if (/^[1-9]\d{0,6}$/.test(params.get("page") || "")) defaults.page = Number(params.get("page"));
+      return defaults;
+    } catch (_) { return defaults; }
+  };
+  let state = readHash(), composing = false, filtered = [];
+  const writeHash = function () {
+    const params = new URLSearchParams();
+    ["tab", "q", "type", "from", "to", "file", "entry", "doc", "anchor"].forEach(function (key) { if (state[key]) params.set(key, state[key]); });
+    if (state.page > 1) params.set("page", String(state.page));
+    const hash = "#" + params.toString();
+    if (location.hash !== hash) {
+      try { history.replaceState(null, "", hash); } catch (_) { location.hash = hash; }
+    }
+  };
+  const setState = function (changes) { Object.assign(state, changes); render(); writeHash(); };
+  const goDocument = function (key, anchor) { setState({tab:"documents", doc:key, anchor:anchor || ""}); };
+  const resolvedLink = function (href, sourceDoc) {
+    if (/[\u0000-\u0020\u007f]/.test(href)) return null;
+    if (/^https?:\/\//i.test(href)) {
+      try { const url = new URL(href); return /^(https?:)$/.test(url.protocol) ? {url:url.href} : null; } catch (_) { return null; }
+    }
+    try {
+      const parts = href.split("#");
+      if (parts.length > 2) return null;
+      const fragment = parts.length === 2 ? decodeURIComponent(parts[1]) : "";
+      const path = decodeURIComponent(parts[0]);
+      if (/[\u0000-\u001f\u007f]/.test(path + fragment) || /[:?\\]/.test(path) || path[0] === "/") return null;
+      let target = sourceDoc;
+      if (path) {
+        const segments = text(sourceDoc.path, "").split("/").slice(0, -1);
+        path.split("/").forEach(function (part) { if (part === "..") { if (!segments.length) throw new Error("Outside document scope"); segments.pop(); } else if (part && part !== ".") segments.push(part); });
+        target = documents.find(function (doc) { return doc.path === segments.join("/"); });
+      }
+      if (!target || target.status !== "present" || !anchorExists(target.key, fragment)) return null;
+      return {doc:target.key, anchor:fragment};
+    } catch (_) { return null; }
+  };
+  const inline = function (parent, source, sourceDoc) {
+    // Cache failed delimiter searches so unfinished Markdown stays linear in input size.
+    let offset = 0, cursor = 0, lineEnd = source.indexOf("\n"), labelEnd = -2, hrefEnd = -2;
+    let noLinks = false, noLinkBefore = -1;
+    const flush = function (until) { parent.appendChild(document.createTextNode(source.slice(offset, until))); };
+    while (cursor < source.length) {
+      if (lineEnd >= 0 && cursor > lineEnd) lineEnd = source.indexOf("\n", cursor);
+      const boundary = lineEnd < 0 ? source.length : lineEnd;
+      if (source[cursor] === "`") {
+        const close = source.indexOf("`", cursor + 1);
+        if (close > cursor + 1 && close < boundary) {
+          flush(cursor); parent.appendChild(node("code", source.slice(cursor + 1, close)));
+          cursor = close + 1; offset = cursor; continue;
+        }
+      }
+      const image = source[cursor] === "!" && source[cursor + 1] === "[";
+      if (!noLinks && cursor > noLinkBefore && (source[cursor] === "[" || image)) {
+        const labelStart = cursor + (image ? 2 : 1);
+        if (labelEnd < labelStart) labelEnd = source.indexOf("](", labelStart);
+        if (labelEnd < 0) noLinks = true;
+        else if (labelEnd >= boundary) noLinkBefore = boundary;
+        else {
+          if (hrefEnd < labelEnd + 2) hrefEnd = source.indexOf(")", labelEnd + 2);
+          if (hrefEnd < 0) noLinks = true;
+          else if (hrefEnd >= boundary) noLinkBefore = boundary;
+          else {
+            flush(cursor);
+            const label = source.slice(labelStart, labelEnd), href = source.slice(labelEnd + 2, hrefEnd);
+            if (image) parent.appendChild(node("span", "[이미지: " + label + "]", "image-alt"));
+            else {
+              const target = resolvedLink(href, sourceDoc);
+              if (!target) parent.appendChild(document.createTextNode(source.slice(cursor, hrefEnd + 1)));
+              else {
+                const a = node("a", label);
+                if (target.url) { a.href = target.url; a.target = "_blank"; a.rel = "noopener noreferrer"; }
+                else { a.href = "#"; a.addEventListener("click", function (event) { event.preventDefault(); goDocument(target.doc, target.anchor); }); }
+                parent.appendChild(a);
+              }
+            }
+            cursor = hrefEnd + 1; offset = cursor; continue;
+          }
+        }
+      }
+      cursor += 1;
+    }
+    flush(source.length);
+  };
+  const markdown = function (target, source, doc, idPrefix, depth) {
+    const nesting = depth || 0;
+    if (nesting >= 32) {
+      target.appendChild(node("pre", text(source, ""), "raw-block"));
+      return;
+    }
+    const lines = text(source, "").split(/\r?\n/), indexed = new Map(headings(source).map(function (h) { return [h.line, h]; }));
+    let i = 0;
+    const startBlock = function (line) { return /^\s*$|^\s{0,3}(?:#{1,6}\s|`{3,}|~{3,}|>\s?|[-+*]\s|\d+[.)]\s)|^\s*\|/.test(line); };
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) { i += 1; continue; }
+      const fence = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (fence) {
+        const body = []; i += 1;
+        while (i < lines.length && !(new RegExp("^\\s{0,3}" + fence[1][0] + "{" + fence[1].length + ",}\\s*$")).test(lines[i])) body.push(lines[i++]);
+        if (i < lines.length) i += 1;
+        const pre = node("pre"); pre.appendChild(node("code", body.join("\n"))); target.appendChild(pre); continue;
+      }
+      if (indexed.has(i)) {
+        const heading = indexed.get(i), h = node("h" + heading.level);
+        h.id = idPrefix + heading.anchor; inline(h, heading.title, doc); target.appendChild(h); i += 1; continue;
+      }
+      if (/^\s*\|/.test(line)) {
+        const body = []; while (i < lines.length && lines[i].trim()) body.push(lines[i++]);
+        target.appendChild(node("pre", body.join("\n"), "raw-block")); continue;
+      }
+      if (/^\s{0,3}>/.test(line)) {
+        const body = []; while (i < lines.length && /^\s{0,3}>/.test(lines[i])) body.push(lines[i++].replace(/^\s{0,3}>\s?/, ""));
+        const quote = node("blockquote"); markdown(quote, body.join("\n"), doc, idPrefix + "quote-", nesting + 1); target.appendChild(quote); continue;
+      }
+      const list = line.match(/^\s{0,3}([-+*]|\d+[.)])\s+(.*)$/);
+      if (list) {
+        const ordered = /^\d/.test(list[1]), container = node(ordered ? "ol" : "ul");
+        if (ordered) container.start = parseInt(list[1], 10);
+        while (i < lines.length) {
+          const item = lines[i].match(/^\s{0,3}([-+*]|\d+[.)])\s+(.*)$/);
+          if (!item || /^\d/.test(item[1]) !== ordered) break;
+          const li = node("li"), check = item[2].match(/^\[([ xX])\]\s*(.*)$/);
+          inline(li, check ? (check[1] === " " ? "☐ " : "☑ ") + check[2] : item[2], doc); container.appendChild(li); i += 1;
+        }
+        target.appendChild(container); continue;
+      }
+      const body = [line]; i += 1;
+      while (i < lines.length && !startBlock(lines[i])) body.push(lines[i++]);
+      const paragraph = node("p"); inline(paragraph, body.join("\n"), doc); target.appendChild(paragraph);
+    }
+  };
+  const sectionText = function (doc, names) {
+    if (!doc || doc.status !== "present") return null;
+    const hs = headings(doc.text), found = hs.find(function (h) { return h.level === 2 && names.indexOf(h.title.toLocaleLowerCase()) >= 0; });
+    if (!found) return null;
+    const next = hs.find(function (h) { return h.line > found.line && h.level <= found.level; });
+    return text(doc.text, "").split(/\r?\n/).slice(found.line + 1, next ? next.line : undefined).join("\n");
+  };
+  const showSection = function (id, names) {
+    const target = $(id), plan = docsByKey.get("plan"), content = sectionText(plan, names); clear(target);
+    if (content === null) target.appendChild(node("p", "해당 섹션 없음 · 전체 계획 문서에서 확인하세요.", "empty-state"));
+    else if (!content.trim()) target.appendChild(node("p", "해당 섹션에 기재된 내용 없음", "empty-state"));
+    else markdown(target, content, plan, id + "-");
+  };
+  const entryLabel = function (entry) { const r = recordOf(entry); return text(r.title, "제목 미기록"); };
+  const row = function (entry, recent) {
+    const r = recordOf(entry), button = node("button", undefined, "entry-row"); button.type = "button";
+    button.setAttribute("aria-pressed", String(state.entry === entry.key));
+    button.appendChild(node("span", entryLabel(entry), "entry-title"));
+    const summary = text(r.summary, "요약 미기록");
+    button.appendChild(node("span", summary.length > 180 ? summary.slice(0, 180) + "…" : summary, "entry-summary"));
+    button.appendChild(node("span", text(r.createdAt) + " · " + text(r.type) + " · 기록 당시 로그", "entry-meta"));
+    button.addEventListener("click", function () { setState({tab:"timeline", entry:entry.key, page:recent ? 1 : state.page}); });
+    return button;
+  };
+  const renderOverview = function () {
+    showSection("current-state", ["current state", "현재 상태"]);
+    showSection("next-actions", ["next actions", "다음 행동"]);
+    const recent = $("recent-entries"); clear(recent);
+    entries.slice(0, 5).forEach(function (entry) { recent.appendChild(row(entry, true)); });
+    if (!entries.length) recent.appendChild(node("p", "아직 작업 기록이 없습니다.", "empty-state"));
+  };
+  const renderGit = function () {
+    const target = $("git-content"), git = model.git || {}; clear(target);
+    if (git.status !== "available") {
+      target.appendChild(node("p", git.status === "not_repository" ? "Git 관리 밖 · 생성 시점 Git 정보 없음" : "Git 조회 불가 · 아래 경고에서 원인을 확인하세요.")); return;
+    }
+    target.appendChild(node("p", "브랜치: " + text(git.branch, "확인 불가 / detached HEAD") + " · HEAD: " + text(git.head, "아직 커밋 없음")));
+    const changes = Array.isArray(git.changes) ? git.changes : [];
+    const details = node("details"), summary = node("summary", "생성 시점 변경 파일 " + changes.length + "개"); details.appendChild(summary);
+    const list = node("ul");
+    changes.forEach(function (change) { list.appendChild(node("li", text(change.status, "") + " " + text(change.path) + (typeof change.previousPath === "string" ? " ← " + change.previousPath : ""))); });
+    details.appendChild(list); target.appendChild(details);
+    target.appendChild(node("p", "로그의 dirty 값은 기록 당시 상태입니다. Git 조회는 작업 완료·현재 브랜치 포함·배포를 증명하지 않습니다.", "source-note"));
+  };
+  const renderWarnings = function () {
+    const warnings = Array.isArray(model.warnings) ? model.warnings : [], box = $("warnings"), list = $("warning-list");
+    const details = $("warnings-details"), panel = $("warnings-panel");
+    let page = 1;
+    box.hidden = warnings.length === 0;
+    $("warnings-summary").textContent = "확인이 필요한 내용 · 경고 " + warnings.length + "건";
+    const showPage = function () {
+      clear(list);
+      panel.hidden = !details.open;
+      if (!details.open) return;
+      const pages = Math.max(1, Math.ceil(warnings.length / 50));
+      page = Math.max(1, Math.min(page, pages));
+      warnings.slice((page - 1) * 50, page * 50).forEach(function (warning) {
+        list.appendChild(node("li", text(warning.message, "알 수 없는 경고") + (typeof warning.source === "string" ? " (" + warning.source + ")" : "")));
+      });
+      $("warning-page-status").textContent = page + " / " + pages + " 페이지 · 최대 50건";
+      $("warning-previous-page").disabled = page <= 1;
+      $("warning-next-page").disabled = page >= pages;
+    };
+    details.addEventListener("toggle", showPage);
+    $("warning-previous-page").addEventListener("click", function () { page -= 1; showPage(); });
+    $("warning-next-page").addEventListener("click", function () { page += 1; showPage(); });
+    showPage();
+  };
+  const renderDetail = function () {
+    const target = $("entry-detail"); clear(target);
+    const entry = byKey.get(state.entry);
+    if (!entry) { target.appendChild(node("h3", "작업 상세")); target.appendChild(node("p", "목록에서 작업을 선택하세요.", "empty-state")); return; }
+    const r = recordOf(entry); target.appendChild(node("h3", entryLabel(entry)));
+    target.appendChild(node("p", "기록 당시 로그 · 원문 보고이며 현재 검증 결과가 아닙니다.", "source-note"));
+    target.appendChild(node("p", text(r.summary, "요약 미기록")));
+    const dl = node("dl");
+    const add = function (label, value) { dl.appendChild(node("dt", label)); dl.appendChild(node("dd", value)); };
+    add("출처", text(entry.sourcePath) + ":" + entry.sourceLine);
+    add("기록 시각", text(r.createdAt) + (entry.timestampUtc === null ? " · 시간대/시각 미확인" : ""));
+    add("유형", text(r.type)); add("브랜치", text(r.branch));
+    add("조회한 커밋 참조", text(entry.commitObjectRef, text(r.commit)));
+    if (typeof r.commit === "string") add("기록된 commit", r.commit);
+    if (typeof r.fullCommit === "string") add("기록된 fullCommit", r.fullCommit);
+    const statusLabel = entry.commitObjectStatus === "verified" ? "기록의 참조 대상을 Git에서 확인" : (entry.commitObjectStatus === "not_recorded" ? "커밋 미확인" : "이 checkout에서 참조 대상을 확인할 수 없음");
+    add("참조 조회", statusLabel);
+    add("기록 당시 dirty", typeof r.dirty === "boolean" ? String(r.dirty) : "미기록");
+    target.appendChild(dl); target.appendChild(node("h4", "기록된 파일"));
+    const files = filesOf(entry), list = node("ul", undefined, "file-list");
+    files.forEach(function (file) {
+      const li = node("li"), button = node("button", file, "file-button"); button.type = "button";
+      button.addEventListener("click", function () { setState({file:file, page:1, tab:"timeline"}); }); li.appendChild(button); list.appendChild(li);
+    });
+    if (!files.length) target.appendChild(node("p", "파일 미기록", "muted")); else target.appendChild(list);
+    const raw = node("details"); raw.appendChild(node("summary", "원문 JSON 보기")); raw.appendChild(node("pre", typeof entry.recordText === "string" ? entry.recordText : JSON.stringify(entry.record, null, 2))); target.appendChild(raw);
+  };
+  const renderTimeline = function () {
+    $("search").value = state.q; $("type-filter").value = state.type; $("date-from").value = state.from;
+    $("date-to").value = state.to; $("file-filter").value = state.file;
+    const query = normalized(state.q), dateActive = !!(state.from || state.to);
+    filtered = entries.filter(function (entry) {
+      if (query && searchValues.get(entry.key).indexOf(query) < 0) return false;
+      if (state.type && recordOf(entry).type !== state.type) return false;
+      if (state.file && filesOf(entry).indexOf(state.file) < 0) return false;
+      if (dateActive) {
+        const day = localDate(entry.timestampUtc);
+        if (!day || (state.from && day < state.from) || (state.to && day > state.to)) return false;
+      }
+      return true;
+    });
+    const pages = Math.max(1, Math.ceil(filtered.length / 50)); state.page = Math.min(state.page, pages);
+    const visible = filtered.slice((state.page - 1) * 50, state.page * 50), list = $("entry-list"); clear(list);
+    visible.forEach(function (entry) { list.appendChild(row(entry, false)); });
+    if (!visible.length) list.appendChild(node("p", entries.length ? "조건에 맞는 작업 기록이 없습니다." : "아직 작업 기록이 없습니다.", "empty-state"));
+    $("result-count").textContent = "결과 " + filtered.length + "건 / 전체 " + entries.length + "건";
+    const unknown = entries.filter(function (entry) { return localDate(entry.timestampUtc) === null; }).length;
+    $("unknown-dates").textContent = "시각 미확인 " + unknown + "건" + (dateActive ? " · 날짜 필터에서 제외" : " · 날짜 필터 사용 시 제외");
+    $("page-status").textContent = state.page + " / " + pages + " 페이지 · 최대 50건";
+    $("previous-page").disabled = state.page <= 1; $("next-page").disabled = state.page >= pages;
+    renderDetail();
+  };
+  const renderDocument = function () {
+    $("document-select").value = state.doc;
+    const target = $("document-content"), doc = docsByKey.get(state.doc); clear(target);
+    if (!doc || doc.status !== "present") { target.appendChild(node("p", "기록 없음 · 이 문서가 아직 없습니다.", "empty-state")); return; }
+    target.appendChild(node("p", "문서 기재 · " + text(doc.path), "source-note"));
+    markdown(target, doc.text, doc, "doc-" + doc.key + "-");
+    if (state.anchor) {
+      const heading = $("doc-" + doc.key + "-" + state.anchor);
+      if (heading) heading.scrollIntoView({block:"start"});
+    }
+  };
+  const render = function () {
+    ["overview", "timeline", "documents"].forEach(function (tab) {
+      $("view-" + tab).hidden = state.tab !== tab;
+      const button = $("nav-" + tab); if (state.tab === tab) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+    });
+    if (state.tab === "overview") renderOverview();
+    if (state.tab === "timeline") renderTimeline();
+    if (state.tab === "documents") renderDocument();
+  };
+  $("project-name").textContent = text((model.project || {}).name, "Context viewer");
+  $("context-path").textContent = "조회 범위: " + text((model.project || {}).contextPath, "") + " · 허용 문서와 활성·보관 작업 기록";
+  $("generated-at").textContent = "생성 시각: " + text(model.generatedAt);
+  const updateAge = function () {
+    const generated = Date.parse(model.generatedAt), elapsed = Math.max(0, Date.now() - generated);
+    $("snapshot-age").textContent = Number.isFinite(generated) ? "생성 후 약 " + Math.floor(elapsed / 60000) + "분 경과 · 원본 변경 여부는 감지하지 않습니다." : "생성 시각 확인 불가";
+  };
+  updateAge(); setInterval(updateAge, 60000);
+  const addOptions = function (target, values) { values.forEach(function (value) { const option = node("option", value); option.value = value; target.appendChild(option); }); };
+  addOptions($("type-filter"), typeValues); addOptions($("file-filter"), fileValues);
+  documents.forEach(function (doc) { const option = node("option", (labels[doc.key] || doc.key) + (doc.status === "present" ? "" : " · 기록 없음")); option.value = doc.key; $("document-select").appendChild(option); });
+  ["overview", "timeline", "documents"].forEach(function (tab) { $("nav-" + tab).addEventListener("click", function () { setState({tab:tab}); }); });
+  ["open-plan-current", "open-plan-next"].forEach(function (id) { $(id).addEventListener("click", function () { goDocument("plan", ""); }); });
+  $("search").addEventListener("compositionstart", function () { composing = true; });
+  $("search").addEventListener("compositionend", function () { composing = false; setState({q:$("search").value, page:1}); });
+  $("search").addEventListener("input", function (event) { if (!composing && !event.isComposing) setState({q:$("search").value, page:1}); });
+  [["type-filter", "type"], ["file-filter", "file"], ["date-from", "from"], ["date-to", "to"]].forEach(function (pair) {
+    $(pair[0]).addEventListener("change", function () { const changes = {page:1}; changes[pair[1]] = $(pair[0]).value; setState(changes); });
+  });
+  $("clear-filters").addEventListener("click", function () { setState({q:"", type:"", from:"", to:"", file:"", entry:"", page:1}); });
+  $("previous-page").addEventListener("click", function () { setState({page:Math.max(1, state.page - 1)}); });
+  $("next-page").addEventListener("click", function () { setState({page:state.page + 1}); });
+  $("document-select").addEventListener("change", function () { setState({doc:$("document-select").value, anchor:""}); });
+  window.addEventListener("hashchange", function () { state = readHash(); render(); });
+  $("skip-main").addEventListener("click", function (event) { event.preventDefault(); $("main-content").focus(); });
+  renderGit(); renderWarnings(); render();
+}());
+"""
+
+VIEW_HTML = r"""<!-- ctx-kit-viewer:1 -->
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="__CSP__">
+<title>ctx · Local Context Viewer</title>
+<style>__CSS__</style>
+</head>
+<body>
+<a id="skip-main" class="skip-link" href="#main-content">본문으로 이동</a>
+<header>
+<div class="eyebrow">CTX / LOCAL CONTEXT</div>
+<h1 id="project-name">로컬 컨텍스트</h1>
+<p>생성 시점의 스냅샷 · <span id="generated-at"></span></p>
+<p id="snapshot-age"></p>
+<p id="context-path"></p>
+<p>갱신: <code>bash ctx.sh view</code> 또는 <code>bash scripts/ctx.sh view</code>를 다시 실행하세요. 브라우저 새로고침만으로 원본이 갱신되지는 않습니다.</p>
+</header>
+<div class="layout">
+<nav aria-label="컨텍스트 탐색">
+<button id="nav-overview" type="button" aria-current="page">개요</button>
+<button id="nav-timeline" type="button">작업 기록</button>
+<button id="nav-documents" type="button">문서</button>
+</nav>
+<main id="main-content" tabindex="-1">
+<aside id="warnings" class="warning-box" aria-label="수집 경고" hidden>
+<details id="warnings-details"><summary id="warnings-summary">확인이 필요한 내용</summary>
+<div id="warnings-panel" hidden><ul id="warning-list"></ul>
+<div class="pagination"><button id="warning-previous-page" type="button">이전 경고</button><span id="warning-page-status"></span><button id="warning-next-page" type="button">다음 경고</button></div></div>
+</details>
+</aside>
+<section id="view-overview" aria-labelledby="overview-heading">
+<h2 id="overview-heading">현재 컨텍스트</h2>
+<p class="source-note">문서 기재와 기록 당시 로그, 생성 시점 Git 조회를 출처별로 표시합니다.</p>
+<div class="overview-grid">
+<section class="overview-section"><div class="section-heading"><h3>현재 상태</h3><button id="open-plan-current" type="button">전체 계획 문서</button></div><p class="source-note">문서 기재 · MASTER_PLAN</p><div id="current-state" class="document-body"></div></section>
+<section class="overview-section"><div class="section-heading"><h3>다음 행동</h3><button id="open-plan-next" type="button">전체 계획 문서</button></div><p class="source-note">문서 기재 · 체크 표시는 원문을 따릅니다.</p><div id="next-actions" class="document-body"></div></section>
+</div>
+<section class="git-snapshot" aria-labelledby="git-heading"><h3 id="git-heading">생성 시점 Git 조회</h3><div id="git-content"></div></section>
+<section aria-labelledby="recent-heading"><h3 id="recent-heading">최근 작업 5건</h3><div id="recent-entries" class="recent-list"></div></section>
+</section>
+<section id="view-timeline" aria-labelledby="timeline-heading" hidden>
+<h2 id="timeline-heading">작업 기록</h2>
+<p class="source-note">활성·보관 기록을 모두 표시합니다. 같은 내용의 기록도 별개로 보존합니다.</p>
+<div class="filters">
+<div class="field search-field"><label for="search">제목·요약·파일명 검색</label><input id="search" type="search" autocomplete="off" placeholder="검색어 입력"></div>
+<div class="field"><label for="type-filter">유형</label><select id="type-filter"><option value="">모든 유형</option></select></div>
+<div class="field"><label for="date-from">시작일 · 브라우저 현지 날짜</label><input id="date-from" type="date"></div>
+<div class="field"><label for="date-to">종료일 · 브라우저 현지 날짜</label><input id="date-to" type="date"></div>
+<div class="field file-field"><label for="file-filter">정확한 파일 경로 · 원문 문자열 기준</label><select id="file-filter"><option value="">모든 파일</option></select></div>
+<div class="reset-field"><button id="clear-filters" type="button">필터 해제</button></div>
+</div>
+<div class="filter-meta"><span id="result-count" role="status" aria-live="polite"></span><span id="unknown-dates"></span></div>
+<div class="timeline-grid"><div><div id="entry-list" class="entry-list" aria-label="작업 목록"></div><div class="pagination"><button id="previous-page" type="button">이전</button><span id="page-status"></span><button id="next-page" type="button">다음</button></div></div><section id="entry-detail" class="entry-detail" aria-label="선택한 작업 상세"></section></div>
+</section>
+<section id="view-documents" aria-labelledby="documents-heading" hidden>
+<h2 id="documents-heading">문서</h2>
+<p class="source-note">문서 기재 · 내용과 완료 여부를 자동 판정하지 않습니다. 지원하지 않는 문법은 원문으로 표시합니다.</p>
+<div class="document-toolbar field"><label for="document-select">열람할 문서</label><select id="document-select"></select></div>
+<article id="document-content" class="document-body" aria-label="문서 원문"></article>
+</section>
+<noscript>이 오프라인 뷰어의 열람·검색에는 JavaScript가 필요합니다. 원본 Markdown과 JSONL은 변경되지 않습니다.</noscript>
+</main>
+</div>
+<footer>로컬 오프라인 HTML · 문서와 로그 원문이 포함됩니다. 공유 전 내용을 검토하세요. 외부 링크는 직접 눌렀을 때만 열립니다.</footer>
+<script id="ctx-view-data" type="application/json">__DATA__</script>
+<script>__JS__</script>
+</body>
+</html>
+"""
+
+def render_view_html(model):
+    """Build one inert-data, offline HTML document from a collected model."""
+    payload = json.dumps(model, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
+    for character, escaped in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"),
+                               ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
+        payload = payload.replace(character, escaped)
+    def digest(content):
+        return base64.b64encode(hashlib.sha256(content.encode("utf-8")).digest()).decode("ascii")
+    csp = ("default-src 'none'; connect-src 'none'; img-src 'none'; object-src 'none'; "
+           "base-uri 'none'; form-action 'none'; script-src 'sha256-" + digest(VIEW_JS) +
+           "'; style-src 'sha256-" + digest(VIEW_CSS) + "'")
+    # Substitute trusted constants before inserting the untrusted JSON last.
+    return (VIEW_HTML.replace("__CSP__", csp).replace("__CSS__", VIEW_CSS)
+            .replace("__JS__", VIEW_JS).replace("__DATA__", payload))
+
+
+"""Embedded viewer output and browser helpers; Python 3.7 standard library."""
+
+import hashlib
+import os
+import stat
+from pathlib import Path
+import webbrowser
+import tempfile
+
+
+VIEW_MARKER = b"<!-- ctx-kit-viewer:1 -->"
+
+
+def _view_stat_signature(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _view_existing_output(path):
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError("Viewer output must be a regular file, not a symlink or other file type: " + path)
+    if before.st_nlink != 1:
+        raise ValueError("Refusing to replace hardlinked viewer output: " + path)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if _view_stat_signature(opened) != _view_stat_signature(before):
+            raise ValueError("Viewer output changed during inspection; preserving it: " + path)
+        if stream.readline(len(VIEW_MARKER) + 3).rstrip(b"\r\n") != VIEW_MARKER:
+            raise ValueError("Refusing to overwrite HTML without the ctx-kit viewer marker; choose another --output path: " + path)
+        stream.seek(0)
+        digest = hashlib.sha256()
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            digest.update(chunk)
+        if (_view_stat_signature(os.fstat(stream.fileno())) != _view_stat_signature(before)
+                or _view_stat_signature(os.lstat(path)) != _view_stat_signature(before)):
+            raise ValueError("Viewer output changed during inspection; preserving it: " + path)
+    return (_view_stat_signature(before), digest.digest())
+
+
+def validate_view_output(output_path, project_root, protected_inputs=()):
+    """Validate without writing; return an absolute path, retaining safe aliases."""
+    root = os.path.realpath(os.path.abspath(os.fspath(project_root)))
+    supplied = os.fspath(output_path)
+    if not supplied or not supplied.endswith(".html"):
+        raise ValueError("Viewer --output must have the .html extension")
+    path = os.path.abspath(supplied if os.path.isabs(supplied) else os.path.join(root, supplied))
+    actual = os.path.realpath(path)
+    try:
+        inside = os.path.commonpath([root, actual]) == root
+    except ValueError:
+        inside = False
+    if not inside or actual == root:
+        raise ValueError("Viewer --output must remain inside the project: " + path)
+    existing = _view_existing_output(path)
+    identity = existing[0][:2] if existing is not None else None
+    for protected in protected_inputs:
+        protected = os.fspath(protected)
+        if os.path.realpath(protected) == actual:
+            raise ValueError("Viewer output conflicts with a protected input: " + path)
+        if identity is not None:
+            try:
+                item = os.stat(protected)
+            except FileNotFoundError:
+                continue
+            if (item.st_dev, item.st_ino) == identity:
+                raise ValueError("Viewer output shares an inode with a protected input: " + path)
+    return path
+
+
+def _view_parent_signature(path, project_root):
+    root = os.path.abspath(os.fspath(project_root))
+    directory = os.path.dirname(path)
+    result = []
+    while True:
+        try:
+            info = os.lstat(directory)
+        except FileNotFoundError:
+            pass
+        else:
+            # Creation of the temporary file changes parent times, not its identity.
+            followed = os.stat(directory)
+            result.append((directory, info.st_dev, info.st_ino, info.st_mode,
+                           followed.st_dev, followed.st_ino, followed.st_mode,
+                           os.readlink(directory) if stat.S_ISLNK(info.st_mode) else None))
+        if directory == root:
+            break
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            break
+        directory = parent
+    return tuple(result)
+
+
+def write_view_html(output_path, html_text, project_root, protected_inputs):
+    """Publish one complete snapshot while preserving an existing safe output."""
+    if not isinstance(html_text, str) or not html_text.startswith(VIEW_MARKER.decode("ascii") + "\n"):
+        raise ValueError("Viewer HTML is missing its generated-file marker")
+    path = validate_view_output(output_path, project_root, protected_inputs)
+    actual = os.path.realpath(path)
+    original = _view_existing_output(path)
+    parents_before = _view_parent_signature(path, project_root)
+    directory = os.path.dirname(path)
+    descriptor = None
+    temporary = None
+    try:
+        os.makedirs(directory, exist_ok=True)
+        parents = _view_parent_signature(path, project_root)
+        if any(item not in parents for item in parents_before):
+            raise ValueError("Viewer output parent changed during generation; preserving output: " + path)
+        validate_view_output(path, project_root, protected_inputs)
+        if os.path.realpath(path) != actual or _view_existing_output(path) != original:
+            raise ValueError("Viewer output changed during generation; preserving it: " + path)
+        descriptor, temporary = tempfile.mkstemp(prefix=".ctx-view-", suffix=".tmp", dir=directory)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            descriptor = None
+            stream.write(html_text)
+            stream.flush()
+            mode = stat.S_IMODE(original[0][2]) if original is not None else 0o600
+            os.chmod(temporary, mode)
+            os.fsync(stream.fileno())
+        validate_view_output(path, project_root, protected_inputs)
+        if (os.path.realpath(path) != actual
+                or _view_parent_signature(path, project_root) != parents
+                or _view_existing_output(path) != original):
+            raise ValueError("Viewer output changed during generation; preserving it: " + path)
+        os.replace(temporary, path)
+        temporary = None
+        try:
+            if os.name != "nt":
+                directory_fd = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        except OSError as error:
+            raise OSError("Viewer saved at " + path + ", but directory sync failed: " + str(error)) from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def open_view(output_path):
+    """Open the generated file URI using Python's system browser selection."""
+    path = os.path.abspath(os.fspath(output_path))
+    try:
+        opened = webbrowser.open(Path(path).as_uri(), new=2)
+    except (OSError, webbrowser.Error) as error:
+        raise OSError("Viewer HTML was saved at " + path + "; browser launch failed: " + str(error)) from error
+    if not opened:
+        raise OSError("Viewer HTML was saved at " + path + "; browser launch failed; open the file manually")
+    return True
+
+# CTX_VIEW_IMPLEMENTATION_END
+
+project_root = os.environ["CTX_VIEW_PROJECT"]
+context_dir = os.environ["CTX_STORAGE_DIR"]
+config_path = os.environ["CTX_VIEW_CONFIG"]
+output_path = os.environ["CTX_VIEW_OUTPUT"] or os.path.join(context_dir, "generated", "view.html")
+if not os.path.isabs(output_path):
+    output_path = os.path.join(project_root, output_path)
+output_path = os.path.abspath(output_path)
+validate_view_output(output_path, project_root, [config_path, os.environ["CTX_VIEW_SCRIPT"]])
+initial_output = _view_existing_output(output_path)
+initial_realpath = os.path.realpath(output_path)
+initial_parents = _view_parent_signature(output_path, project_root)
+snapshot = collect_snapshot(project_root, context_dir, config_path, output_path)
+git_snapshot = collect_git_snapshot(project_root, snapshot["excludedPaths"], snapshot["commitRefs"])
+generated_at = _view_now()
+model = build_view_model(snapshot, git_snapshot, generated_at)
+html_text = render_view_html(model)
+validate_view_output(output_path, project_root, snapshot["protectedInputs"])
+current_parents = _view_parent_signature(output_path, project_root)
+if (os.path.realpath(output_path) != initial_realpath
+        or _view_existing_output(output_path) != initial_output
+        or any(parent not in current_parents for parent in initial_parents)):
+    raise ValueError("Viewer output changed during generation; preserving it: " + output_path)
+write_view_html(output_path, html_text, project_root, snapshot["protectedInputs"])
+print("Generated context snapshot: {}".format(output_path))
+print("Snapshot only: regenerate to refresh. Full logs are included; review before sharing.")
+if os.environ["CTX_VIEW_OPEN"] == "1":
+    try:
+        opened = open_view(output_path)
+        if not opened:
+            raise OSError("the browser launcher reported failure")
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print("Error: HTML was generated at {}, but opening the browser failed: {}".format(
+            output_path, error), file=sys.stderr)
+        sys.exit(1)
+PYEOF
+}
+
 # ── version ────────────────────────────────────────────
 cmd_version() {
   echo "ctx v${VERSION}"
@@ -2436,6 +4061,7 @@ case "${1:-help}" in
   generate) cmd_generate "$2" ;;
   log|record) cmd_log "${@:2}" ;;
   timeline) cmd_timeline "${@:2}" ;;
+  view)     cmd_view "${@:2}" ;;
   backfill) cmd_backfill "${@:2}" ;;
   archive)  cmd_archive "${@:2}" ;;
   hook)     cmd_hook "${@:2}" ;;

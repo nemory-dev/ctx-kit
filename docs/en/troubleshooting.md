@@ -308,6 +308,29 @@ The first character is `-` for a regular file, `l` for a symlink, `d` for a dire
 
 Do not treat generated or exported output as a secret-filtered bundle. Review it before pasting into an external LLM.
 
+## `view` fails or the snapshot looks outdated
+
+`view` does not repair or discard source records. A failure before replacement preserves the previous HTML; an old file after failure is not a newly generated snapshot. Start with `bash ctx.sh view --help` and the exact reported path.
+
+| Symptom | Cause and next step |
+| --- | --- |
+| Missing configuration/context | Initialize deliberately with the [existing-project safeguards](getting-started.md#existing-projects). `view` does not run `init` or `sync`. |
+| Pending archive transaction | Preserve the journal and context, then follow [archive recovery](#interrupted-archive-and-recovery-journal). `view` checks under the shared lock but does not recover, delete, or edit the journal. |
+| Invalid JSON, non-object row, or UTF-8 error | Back up and inspect the reported file/line using the [JSONL diagnostic](#invalid-jsonl-permission-errors-or-a-failed-log). Restore from evidence; do not discard a damaged last row to pass generation. |
+| Input limit exceeded | The limit is 20 MiB across all inputs including `ctx.config.json`, and 20,000 active plus archived work records. `archive` moves rows but does not reduce the viewer's total. Preserve the history; this version has no truncation or partial-history option. |
+| Unsafe input/context path | Keep the context's real root inside the project. Input files and their subdirectories must not be symlinks, and inputs must be regular files. Preserve and inspect the reported entry before choosing a safe layout. |
+| Writer lock timeout | Another operation held the lock for 30 seconds. Follow the [lock procedure](#writer-lock-timeout); do not delete `.ctx.lock`. Its existence does not establish that it is held. |
+| Output replacement refused | Preserve the file and choose an unused name with `bash ctx.sh view --output reports/context-view.html`. Only a regular single-link file with first-line `<!-- ctx-kit-viewer:1 -->` is replaceable. Do not add the marker to an unrelated file to bypass the check. |
+| Outside-project output or unsafe alias | Use `.html` whose real destination stays inside the project. Final symlinks, other file types, hardlinks, and input/configuration/script collisions are rejected. Parent symlinks may resolve only inside the project. |
+| Output changed during generation | Another process changed the destination or its parents. Preserve that version, finish or stop the other writer, and regenerate. There is no `--force`. |
+| Temporary write, fsync, or replacement failure | Inspect the output directory's permissions and storage. Old output remains intact and this run's temporary file is removed. Do not make the project world-writable. |
+| “Viewer saved … but directory sync failed” | Replacement succeeded but directory durability could not be confirmed. New HTML may exist despite exit 1. Inspect its generation time and fix the filesystem issue before retrying. |
+| Browser launch failed | HTML remains at the reported path. Open it manually or check the OS default browser/Python `BROWSER` setting. Omit `--open` to generate only. A requested launch failure returns exit 1. |
+| Browser shows old state | Rerun `bash ctx.sh view`, then open/refresh that generated file. Refresh alone does not collect source changes. Check the generation time and output path. |
+| Git information unavailable | Read the displayed reason and check Git/repository permissions. An unavailable query does not mean a clean working tree. Documents and history remain usable. |
+
+Generation does not add `.gitignore` rules. Review the full HTML for private data and check tracking policy before sharing or staging. External resources are blocked during viewing; supported HTTP(S) links open only after an explicit click.
+
 ## Windows wrapper or symlink failures
 
 Copy `ctx.cmd` **beside** `ctx.sh`. Use `ctx.cmd` in Command Prompt, `./ctx.cmd` or `.\ctx.cmd` in PowerShell, or `bash ctx.sh` in Git Bash. For a `scripts/` installation, keep both files there and invoke `.\scripts\ctx.cmd` from PowerShell; configuration remains at the parent project root.

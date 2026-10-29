@@ -108,6 +108,35 @@ File paths and commit fields are read with NUL separators, so unusual file names
 
 With no Git commits, `backfill` reports that there is nothing to import. It skips commits represented by `commit` or `fullCommit` in the active log or any `archive/timeline-*.jsonl` file, including the legacy archive. Legacy hash-only references are resolved in one Git batch, so a change to `core.abbrev` does not reimport them. An ambiguous reference stops backfill; preserve the record and identify its full commit ID before retrying. Repeating a backfill after archiving leaves those commits archived. Invalid archive JSONL stops backfill before rewriting the active log. Existing work-unit records and archived occurrences are preserved. Choose a limited range appropriate to your adoption workflow and inspect the result.
 
+## Browse an offline context snapshot
+
+After initialization, generate one self-contained HTML file without a server, package install, or network connection:
+
+```bash
+bash ctx.sh view
+bash ctx.sh view --open
+bash ctx.sh view --output reports/context-view.html
+bash ctx.sh view --help
+```
+
+The default is `<context>/generated/view.html`. `--open` explicitly uses Python's system-browser launcher after saving; without it, generation only prints the path. `--output` resolves from the project root, permits an absolute path inside the project, and requires `.html`. Its real destination must stay inside the project. For `scripts/`, use `bash scripts/ctx.sh view --open`.
+
+The first screen shows the plan's `Current State` / `현재 상태` and `Next Actions` / `다음 행동` sections, recent work, and generation-time Git observations. Missing sections are identified without inventing a summary. Source labels separate document statements, historical logs, and Git observations. Finding a recorded commit object in this checkout does not prove completion, current branch membership, deployment, or current test success. `pending`, `uncommitted`, and missing references stay unverified.
+
+Warnings are collapsed by default; expanding them displays 50 at a time.
+
+Search titles, summaries, and recorded file names, then filter by type, local calendar date, or an exact file path. Clicking a file applies its original string as the exact filter. Search normalizes Unicode, while exact file paths stay distinct. Date filters use the browser's local date and exclude records without a usable timezone, with an explanation. Results are paged 50 at a time; details include original content and source file/line. Filters and selection are stored in the URL hash for bookmarking.
+
+The document view includes the plan, decisions, backlog, digest, completed tasks, and retired decisions when available. A small safe Markdown subset is supported; raw HTML, images, and unsupported syntax remain text. Recognized document links navigate internally. Safe HTTP(S) links open only when clicked.
+
+Inputs are limited to the allowed context Markdown and active plus `archive/timeline-*.jsonl` records, including legacy archives. Repeated occurrences and raw objects remain intact. Project source files and `generate` collection patterns are not read. The limit is **20 MiB across all inputs including `ctx.config.json`, and 20,000 work records**. Exceeding a limit, invalid UTF-8/JSONL, a non-object row, unsafe input path, or pending archive stops generation and preserves the old HTML. Missing documents/logs are valid empty states. Git absence or query failure is shown while document browsing stays available.
+
+Regenerate after editing sources: browser refresh does not reread Markdown, JSONL, or Git. The timestamp and elapsed-time display describe a saved snapshot and do not detect source changes. Collection uses the shared writer lock with a 30-second wait and may create `work-log/.ctx.lock` and its parent. It does not edit sources, recover archives, add log rows, or change hooks, configuration, or `.gitignore`.
+
+Only a regular single-link file with first-line `<!-- ctx-kit-viewer:1 -->` can be replaced. Final symlinks, other file types, hardlinks, and source/configuration/script collisions are rejected. A parent symlink is allowed only when its real destination stays inside the project. New HTML has owner-only read/write permissions; replacement preserves old permissions. Choose another output name for a user-authored report; there is no `--force`. Detected concurrent changes stop replacement, but output writers are not fully serialized.
+
+Open the reported file and check its generation time, document sections, and record count. Full records may contain private details; no automatic masking is promised. Review sharing and Git tracking explicitly. See [viewer troubleshooting](troubleshooting.md#view-fails-or-the-snapshot-looks-outdated) for recovery.
+
 ## Keep the active context small
 
 Review the plan and decisions first, then archive when their completed or retired content can leave the active context:
