@@ -44,6 +44,8 @@ bash ctx.sh view --open
 
 기본 출력은 `<context>/generated/view.html`입니다. 원본 변경 후 명령을 다시 실행하세요. 브라우저 새로고침은 저장된 스냅샷만 다시 읽습니다. HTML에는 전체 기록이 포함되므로 공유 전 비공개 내용을 검토하세요. [뷰어 사용 흐름](docs/ko/workflows.md#오프라인-컨텍스트-스냅샷-열람하기)을 참고하세요.
 
+문서와 기록을 함께 찾으려면 `bash ctx.sh search --query "timeout cache"`, 근거를 붙여 인계하려면 `bash ctx.sh handoff`를 실행하세요. HTML에도 두 탭이 있습니다. [검색·인수인계 사용법](docs/ko/workflows.md#통합-검색과-근거-있는-인수인계)을 참고하세요.
+
 ## 컨텍스트 구성
 
 ```text
@@ -88,6 +90,8 @@ project/
 | `bash ctx.sh log --summary "..."` | 작업 단위 기록. `record`도 같은 명령 |
 | `bash ctx.sh timeline --limit 20` | 현재 타임라인 조회 |
 | `bash ctx.sh view --open` | 오프라인 컨텍스트 스냅샷 생성 후 브라우저 열기 |
+| `bash ctx.sh search --query "timeout cache"` | 문서·활성/보관 기록 통합 키워드 검색 |
+| `bash ctx.sh handoff --limit 5` | 출처·누락·당시 보고를 구분한 인수인계 출력 |
 | `bash ctx.sh backfill --limit 30` | 최근 Git 커밋을 현재 타임라인으로 가져오기 |
 | `bash ctx.sh archive --keep 30` | 완료 작업, 폐기된 결정, 오래된 로그 보관 |
 | `bash ctx.sh export` | 검토 후 수동 공유할 컨텍스트 출력 |

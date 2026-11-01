@@ -137,6 +137,54 @@ Only a regular single-link file with first-line `<!-- ctx-kit-viewer:1 -->` can 
 
 Open the reported file and check its generation time, document sections, and record count. Full records may contain private details; no automatic masking is promised. Review sharing and Git tracking explicitly. See [viewer troubleshooting](troubleshooting.md#view-fails-or-the-snapshot-looks-outdated) for recovery.
 
+## Unified search and grounded handoff
+
+Run these commands in an initialized project; use `bash scripts/ctx.sh` for a scripts installation:
+
+```bash
+bash ctx.sh search --query "timeout cache" --scope all --limit 20
+bash ctx.sh search --query "한글.kt" --scope logs --json
+bash ctx.sh handoff
+bash ctx.sh handoff --query "timeout cache" --limit 5 --max-chars 20000 --json
+bash ctx.sh search --help
+bash ctx.sh handoff --help
+```
+
+Search covers the six allowed Markdown bodies/paths and title/summary/files of every active and archived JSONL occurrence. Scope is all (default), documents, or logs. All terms must occur within one document or one record. Per term, a log title scores 4, document/file paths score 2, and body/summary scores 1; a document path does not also score as a title. Ties follow fixed document order, then UTC descending, unknown time last, source path and line. Repeated records stay separate.
+
+Matching applies NFC and ASCII A–Z case folding only. ASCII whitespace splits terms; NBSP, ideographic spaces and U+2028 do not. The raw query limit is 256 Unicode code points and 16 terms before deduplication; limit is 1–50 (default 20). NFC parity for characters introduced after Unicode 11 is not guaranteed between Python 3.7 and newer browsers. Use `--query=--flag` for literal option-like text. Empty queries, duplicate options and unknown arguments fail.
+
+Each source includes the collected file's SHA-256 and a one-based **LF-delimited line range**. Documents use the first matching body line; a path-only match has null lines. Logs use the original JSONL line. snapshotId identifies the input manifest, independent of time, query or output path. Treat refs as opaque identifiers local to that snapshot. Regenerate and check the original/hash after edits; these are neither permanent links nor proof of present state.
+
+Regenerate view to use the **통합 검색 (unified search)** and **인수인계 (handoff)** tabs. Search pages have at most 50 rows and wait for IME composition. Document hits navigate to the preceding heading rather than an exact line scroll. Log hits open existing details and clear timeline filters. Back restores the search and earlier filter state. sq/ss/sp in the URL hash hold query, scope and page.
+
+Handoff quotes explicit, unindented ATX H2 bodies from MASTER_PLAN.md in this order:
+
+| Order | Allowed heading |
+| --- | --- |
+| 1 | `## Constraints` / `## 제약 조건` |
+| 2 | `## Current State` / `## 현재 상태` |
+| 3 | `## Next Actions` / `## 다음 행동` |
+| 4 | `## Verification` / `## 검증` |
+| 5 | `## Unverified` / `## 미검증` |
+
+Review the original and write these sections deliberately; the tool does not rewrite plans/templates. Repeated sections are all preserved. Empty, missing or ambiguous sections are marked missing/ambiguous. Headings in fences, comments, quotes and lists are not promoted. Indented headings, setext or an unclosed comment inside a required block make that block ambiguous and exclude it. This does not automatically extract every natural-language constraint or include entire decision documents.
+
+complete means the five sections are **recorded**, not that their claims were verified. Success logs remain historical reports. grantsAuthority=false: records do not establish current test success, permission to change files, or approval to commit/deploy. Git branch/head/status/change count are separately timestamped observations. Missing does not mean none.
+
+Extra logs default to 5 (limit 0–50), ordered by logs search when query is supplied, otherwise by UTC. Original recordText, large integer digits and repeated occurrences remain intact. The default budget is **12,000 Unicode code points for the entire final output**, including LF, notices, sources and warnings; allowed range is 1,000–100,000. Markdown and JSON count their actual serialized sizes separately. ASCII-escaped JSON can use six characters per Korean character. If mandatory output alone exceeds the budget, exit 1 with empty stdout and a required-size explanation on stderr. Additional records form a whole-record prefix, stopping at the first overflow. Later short records never bypass earlier ones. available = selected + omittedByLimit + omittedByBudget.
+
+JSON preserves original values. Markdown displays CRLF as LF, doubles original backslashes, and visibly escapes controls, bidi and surrogates. displayStats counts CRLF/backslashes/other controls in the selected source fields, not JSON escape characters. Warnings have eight fixed code groups, counts, and up to two 160-character examples per group.
+
+HTML displays the default text from the same Python builder at generation time. A budget overflow affects only that tab, leaving the viewer usable. Clipboard writes happen only after clicking Copy; rejection or an unavailable API selects the text and offers manual ⌘C/Ctrl+C. Use CLI options to change query, limit or budget; HTML does not rebuild the packet.
+
+These CLI commands do not write HTML or sources. Search never queries Git. Both reuse the shared reader's 20 MiB/20,000-record, UTF-8/JSONL, safe-path, pending-journal and lock checks. Locking may create work-log/.ctx.lock and its parent. Corruption, limit and lock errors exit 1 without partial result output. No browser, server or AI call is needed. Review private details before sharing a full HTML snapshot or handoff.
+
+
+Use Git observations only in repositories you trust. The reader does not add an ownership-check bypass; failures appear as unavailable. fsmonitor is disabled, but `git status` may run clean/process filters configured by the repository or globally (for example Git LFS). Side effects of those external filters, including file writes, are not blocked. `search` never invokes Git. Direct source immutability does not guarantee that Git filter programs will never run. See [Git filters](https://git-scm.com/docs/gitattributes#_filter) and [ownership checks](https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory).
+
+Long search-result titles have a preview of at most 160 code points; JSON and details retain the original title. Text-mode search visibly escapes LF/TAB/U+2028/U+2029 in titles/snippets to keep them on one line. A required handoff block affected by an unclosed fence is excluded as ambiguous. Inspect the source for unsupported or ambiguous container syntax, such as list-contained fences. Comment markers inside inline code are not HTML comments. Warning total sums occurrences by code: bidi may belong to two codes, and characters in different selected fields are counted separately.
+
 ## Keep the active context small
 
 Review the plan and decisions first, then archive when their completed or retired content can leave the active context:

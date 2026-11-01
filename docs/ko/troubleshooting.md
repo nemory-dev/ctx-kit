@@ -338,3 +338,20 @@ PY
 `[Error] Git Bash is required to run ctx on Windows.`는 래퍼가 확인하는 위치에서 Git Bash를 찾지 못했다는 뜻입니다. Git Bash와 적절한 Python 실행 파일을 다른 터미널뿐 아니라 래퍼가 실행하는 셸에서도 찾을 수 있어야 합니다. Git Bash에서 위 Python 진단을 실행하세요. CLI는 `python3`, `python`, `py -3` 순으로 검사하며 Python 3.7 이상을 실제로 실행하는 후보만 사용합니다. 설치에 맞게 `PATH`를 설정하세요. CLI는 개인 런타임 위치를 탐색하지 않습니다.
 
 심볼릭 링크 생성에는 Windows 지원과 충분한 권한도 필요합니다. 보통 개발자 모드나 적절한 권한의 셸로 준비합니다. `ln -s`가 실패하면 이 환경을 먼저 확인하세요. 심볼릭 링크 지원을 끈 Git은 링크를 일반 텍스트 파일로 checkout할 수 있습니다. `sync`는 충돌하는 일반 파일을 보존하므로 실행 전에 실제 파일 유형과 내용을 확인하세요. 이는 호환성 요구 사항이며, 여기서 실제 Windows 전체 실행을 검증하지는 않았습니다.
+
+## 검색·인수인계 오류와 불완전 결과
+
+| 증상 | 확인 및 조치 |
+| --- | --- |
+| 검색 인자 오류 | `bash ctx.sh search --help`를 단독 실행하세요. query 필수, 256자/16어, scope all/documents/logs, limit 1~50, 중복 옵션 금지입니다. `--query=--flag`를 사용하면 옵션 모양도 찾습니다. |
+| 결과 0건 | 한 문서/한 기록 안에 모든 검색어가 있어야 합니다. 다른 기록의 단어를 합치지 않습니다. 전체 Unicode 대소문자를 통일하지 않으며 ASCII만 통일합니다. |
+| 필수 섹션 missing/ambiguous | MASTER_PLAN.md의 허용 H2와 원문을 확인하고 사용자가 기재하세요. fence/주석/들여쓰기/setext가 경계를 모호하게 만들 수 있습니다. 누락은 없음이나 검증 성공을 뜻하지 않습니다. |
+| budget exceeded / 기본 예산 초과 | stderr의 최소 필요 크기를 보고 `bash ctx.sh handoff --limit 0 --max-chars 20000`으로 필수만 확인하세요. 최대 100000자이며 필수 원문을 자르지 않습니다. JSON은 ASCII escape로 더 클 수 있습니다. 기본 HTML 탭이 초과해도 나머지 뷰어는 사용할 수 있습니다. |
+| 기록 일부 생략 | selection의 omittedByLimit/omittedByBudget을 구분하세요. limit과 max-chars를 조절하고 원문을 확인합니다. 앞의 큰 기록을 건너뛰어 뒤의 작은 기록을 포함하지 않습니다. |
+| 자동 복사 실패 | 텍스트가 선택되면 ⌘C 또는 Ctrl+C로 수동 복사하세요. 브라우저의 file:// 클립보드 정책에 따라 거부될 수 있습니다. 서버를 켜거나 권한을 바꿀 필요가 없습니다. |
+| 출처가 현재 파일과 다름 | 저장된 스냅샷입니다. `view`/`search`/`handoff`를 다시 실행하고 snapshotId와 파일 hash를 비교하세요. |
+| 손상·journal·잠금·상한 오류 | 위의 뷰어/아카이브 복구 절차를 따르세요. 새 명령은 자동 복구하거나 기록을 버리지 않습니다. 입력 오류는 stdout 없이 종료 1입니다. |
+
+읽기 명령도 공유 잠금을 사용하므로 .ctx.lock 생성/대기 권한이 필요합니다. Git unavailable은 clean을 뜻하지 않습니다. 인수인계의 complete는 필수 섹션 기재 여부이며 현재 검증 성공이나 사용자 승인이 아닙니다.
+
+Git 소유권 오류는 해당 저장소의 신뢰·소유권을 확인하세요. ctx가 safe.directory=*를 설정해 우회하지 않습니다. Git 관측은 사용자 설정의 clean/process 필터를 실행할 수 있습니다. 외부 필터의 부수효과가 허용되지 않는 환경에서는 Git을 호출하지 않는 search로 문서·로그만 확인하세요.

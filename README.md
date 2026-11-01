@@ -44,6 +44,8 @@ bash ctx.sh view --open
 
 The default output is `<context>/generated/view.html`. Run the command again after source changes: browser refresh only reloads the saved snapshot. The HTML includes full records; review private details before sharing. See the [viewer workflow](docs/en/workflows.md#browse-an-offline-context-snapshot).
 
+Use `bash ctx.sh search --query "timeout cache"` to find documents and records together, or `bash ctx.sh handoff` to quote evidence for resuming work. Both are also available as HTML tabs. See [search and handoff](docs/en/workflows.md#unified-search-and-grounded-handoff).
+
 ## How the context fits together
 
 ```text
@@ -88,6 +90,8 @@ Run commands from the project root. If installed under `scripts/`, use `bash scr
 | `bash ctx.sh log --summary "..."` | Record a work unit; `record` is an alias |
 | `bash ctx.sh timeline --limit 20` | Read active timeline entries |
 | `bash ctx.sh view --open` | Generate an offline context snapshot and open it in a browser |
+| `bash ctx.sh search --query "timeout cache"` | Search documents and active/archived work records |
+| `bash ctx.sh handoff --limit 5` | Quote handoff evidence with missing sections and historical reports labeled |
 | `bash ctx.sh backfill --limit 30` | Import recent Git commits into the active timeline |
 | `bash ctx.sh archive --keep 30` | Archive completed tasks, retired decisions, and older logs |
 | `bash ctx.sh export` | Print selected context for review and manual sharing |

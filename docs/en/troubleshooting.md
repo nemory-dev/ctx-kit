@@ -338,3 +338,20 @@ Copy `ctx.cmd` **beside** `ctx.sh`. Use `ctx.cmd` in Command Prompt, `./ctx.cmd`
 `[Error] Git Bash is required to run ctx on Windows.` means the wrapper did not find Git Bash in its checked locations. Git Bash and a suitable Python executable must be available to the wrapper's shell, not just to a different terminal. In Git Bash, run the Python diagnostics above: the CLI checks `python3`, `python`, then `py -3`, and only accepts a candidate that runs Python 3.7+. Configure `PATH` for your installation; the CLI does not search private runtime locations.
 
 Symlink creation also requires Windows support and sufficient privileges, commonly provided through Developer Mode or an appropriately authorized shell. If `ln -s` fails, check that environment before retrying. Git may check out symlinks as ordinary text files when symlink support is disabled; inspect the actual file type and content before running `sync`, which preserves a conflicting regular file. These are compatibility requirements; an actual Windows end-to-end run has not been verified here.
+
+## Search and handoff errors or incomplete output
+
+| Symptom | Check and next step |
+| --- | --- |
+| Invalid search arguments | Run `bash ctx.sh search --help` alone. Query is required (256 code points/16 terms), scope is all/documents/logs, limit is 1–50, and options cannot repeat. Use `--query=--flag` for option-like text. |
+| Zero results | All terms must occur in one document or record. Words in different records are not combined. Only ASCII case is folded, not all Unicode case. |
+| Required section missing/ambiguous | Inspect the allowed H2 headings and original MASTER_PLAN.md, then record the content deliberately. Fences, comments, indentation and setext may obscure boundaries. Missing does not mean none or test success. |
+| Budget exceeded | Check the minimum size on stderr. Try `bash ctx.sh handoff --limit 0 --max-chars 20000` for mandatory content only (maximum 100000). Required source text is never cut. ASCII-escaped JSON may need a larger budget. HTML budget failure leaves other tabs usable. |
+| Some records omitted | Distinguish omittedByLimit from omittedByBudget in selection. Adjust limit/max-chars and inspect sources. An oversized earlier record is never skipped to include later short ones. |
+| Clipboard rejected/unavailable | Use ⌘C or Ctrl+C on the selected text. A browser may deny clipboard access on file://. No server or permission changes are needed. |
+| Source differs from the current file | This is a saved snapshot. Rerun view/search/handoff and compare snapshotId and source hash. |
+| Corruption, pending journal, lock or input limit | Follow the viewer/archive recovery procedures above. New commands neither recover automatically nor discard records; input failures exit 1 with empty stdout. |
+
+Read commands also require permission to create/wait on the shared .ctx.lock. Git unavailable does not mean clean. A complete handoff means the required sections are recorded, not current verification success or user approval.
+
+For ownership errors, inspect repository ownership and trust. The reader does not add safe.directory=*. Git observation may run configured clean/process filters. When external-filter side effects are unacceptable, use search to inspect documents/logs without invoking Git.

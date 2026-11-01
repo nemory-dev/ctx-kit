@@ -493,6 +493,8 @@ cmd_help() {
   printf "  %-20s %s\n" "log"            "Record a commit/work-unit summary into context work-log"
   printf "  %-20s %s\n" "timeline"       "Show recorded work-log entries by commit/work unit"
   printf "  %-20s %s\n" "view"           "Generate an offline HTML context snapshot (--open to browse)"
+  printf "  %-20s %s\n" "search"         "Search documents and work logs (--query TEXT)"
+  printf "  %-20s %s\n" "handoff"        "Quote grounded handoff sections and selected records"
   printf "  %-20s %s\n" "backfill"       "Backfill past Git commits into context work-log"
   printf "  %-20s %s\n" "archive"        "Archive completed tasks, deprecated ADRs & split logs"
   printf "  %-20s %s\n" "hook [cmd]"     "Manage Git pre-commit hook (install|uninstall|status)"
@@ -2422,6 +2424,31 @@ PYEOF
 }
 
 # ── view ───────────────────────────────────────────────
+resolve_view_context() {
+  require_config
+  require_python
+  CONTEXT_DIR=$(ctx_python - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" <<'PYEOF'
+import json
+import os
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        config = json.load(stream)
+    if not isinstance(config, dict):
+        raise ValueError("ctx.config.json must contain an object")
+    source = config.get("source", "sample-context/AGENT_RULES.md")
+    if not isinstance(source, str) or not source or "\0" in source:
+        raise ValueError("Configuration source must be a non-empty path")
+    sys.stdout.reconfigure(newline="\n")
+    print(os.path.abspath(os.path.join(sys.argv[2], os.path.dirname(source) or "sample-context")))
+except (OSError, ValueError, RecursionError) as error:
+    print("Error: {}".format(error), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+  ) || return $?
+}
+
 cmd_view() {
   local view_output="" view_open="0"
   while [ "$#" -gt 0 ]; do
@@ -2447,31 +2474,74 @@ cmd_view() {
       *) echo "Error: unknown view argument: $1" >&2; return 1 ;;
     esac
   done
-  require_config
-  require_python
-  CONTEXT_DIR=$(ctx_python - "$(py_path "$CONFIG")" "$(py_path "$PROJECT_ROOT")" <<'PYEOF'
-import json
-import os
-import sys
-
-try:
-    with open(sys.argv[1], encoding="utf-8") as stream:
-        config = json.load(stream)
-    if not isinstance(config, dict):
-        raise ValueError("ctx.config.json must contain an object")
-    source = config.get("source", "sample-context/AGENT_RULES.md")
-    if not isinstance(source, str) or not source or "\0" in source:
-        raise ValueError("Configuration source must be a non-empty path")
-    sys.stdout.reconfigure(newline="\n")
-    print(os.path.abspath(os.path.join(sys.argv[2], os.path.dirname(source) or "sample-context")))
-except (OSError, ValueError, RecursionError) as error:
-    print("Error: {}".format(error), file=sys.stderr)
-    sys.exit(1)
-PYEOF
-  ) || return $?
+  resolve_view_context
   CTX_VIEW_PROJECT="$(py_path "$PROJECT_ROOT")" CTX_VIEW_CONFIG="$(py_path "$CONFIG")" \
     CTX_VIEW_SCRIPT="$(py_path "$SCRIPT_PATH")" CTX_VIEW_OUTPUT="$view_output" \
-    CTX_VIEW_OPEN="$view_open" context_python --read-only <<'PYEOF'
+    CTX_VIEW_OPEN="$view_open" CTX_READER_ACTION=view CTX_READER_QUERY="" CTX_READER_HAS_QUERY=0 \
+    CTX_READER_SCOPE=all CTX_READER_LIMIT=20 CTX_READER_MAX_CHARS=12000 \
+    CTX_READER_JSON=0 context_reader_python
+}
+
+cmd_context_read() {
+  local action="$1"
+  shift
+  if [ "$#" -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+    if [ "$action" = search ]; then
+      echo "Usage: bash ctx.sh search --query TEXT [--scope all|documents|logs] [--limit 1..50] [--json]"
+      echo "Search document bodies/paths and work-log title/summary/files using keyword AND."
+    else
+      echo "Usage: bash ctx.sh handoff [--query TEXT] [--limit 0..50] [--max-chars 1000..100000] [--json]"
+      echo "Quote explicit MASTER_PLAN sections and selected records with snapshot-local sources."
+      echo "Default budget: 12000 Unicode code points, including final LF. No authority is granted."
+    fi
+    return 0
+  fi
+  local query="" scope=all limit=20 max_chars=12000 json_output=0 has_query=0
+  [ "$action" != handoff ] || limit=5
+  local seen=" " name value
+  while [ "$#" -gt 0 ]; do
+    name="${1%%=*}"
+    case "$name" in
+      --json)
+        [ "$1" = --json ] || { echo "Error: --json takes no value." >&2; return 1; }
+        value=1; shift ;;
+      --query|--scope|--limit|--max-chars)
+        if { [ "$name" = --scope ] && [ "$action" != search ]; } ||
+           { [ "$name" = --max-chars ] && [ "$action" != handoff ]; }; then
+          echo "Error: option is not supported by this command." >&2; return 1
+        fi
+        if [[ "$1" == *=* ]]; then
+          value="${1#*=}"; shift
+        else
+          if [ "$#" -lt 2 ] || [[ "$2" == --* ]]; then
+            echo "Error: option requires a value (use --query=--flag for literal flags)." >&2; return 1
+          fi
+          value="$2"; shift 2
+        fi ;;
+      *) echo "Error: unknown argument; use the command's --help alone." >&2; return 1 ;;
+    esac
+    if [[ "$seen" == *" $name "* ]]; then
+      echo "Error: duplicate option." >&2; return 1
+    fi
+    seen="$seen$name "
+    case "$name" in
+      --query) query="$value"; has_query=1 ;;
+      --scope) scope="$value" ;;
+      --limit) limit="$value" ;;
+      --max-chars) max_chars="$value" ;;
+      --json) json_output=1 ;;
+    esac
+  done
+  resolve_view_context >&2
+  CTX_VIEW_PROJECT="$(py_path "$PROJECT_ROOT")" CTX_VIEW_CONFIG="$(py_path "$CONFIG")" \
+    CTX_VIEW_SCRIPT="$(py_path "$SCRIPT_PATH")" CTX_VIEW_OUTPUT="" CTX_VIEW_OPEN=0 \
+    CTX_READER_ACTION="$action" CTX_READER_QUERY="$query" CTX_READER_HAS_QUERY="$has_query" \
+    CTX_READER_SCOPE="$scope" CTX_READER_LIMIT="$limit" CTX_READER_MAX_CHARS="$max_chars" \
+    CTX_READER_JSON="$json_output" context_reader_python
+}
+
+context_reader_python() {
+  context_python --read-only <<'PYEOF'
 # CTX_VIEW_IMPLEMENTATION_START
 # Viewer sources are read under the existing writer lock without recovery.
 import datetime
@@ -2613,7 +2683,7 @@ def _view_commit_ref(record):
     return full_commit if isinstance(full_commit, str) and full_commit else None
 
 
-def collect_snapshot(project_root, context_dir, config_path, output_path):
+def collect_snapshot(project_root, context_dir, config_path, output_path=None):
     project = os.path.realpath(os.fspath(project_root))
     context = os.path.realpath(os.fspath(context_dir))
     config_path = os.path.abspath(os.fspath(config_path))
@@ -2683,14 +2753,19 @@ def collect_snapshot(project_root, context_dir, config_path, output_path):
     protected = [config_path] + [os.path.join(context, *path.split("/")) for path in paths]
     script = os.environ.get("CTX_VIEW_SCRIPT", os.path.join(project, "ctx.sh"))
     protected.extend([script, os.path.join(context, "work-log", ".ctx.lock"), journal])
-    return {"project": {"name": os.path.basename(project),
+    manifest = build_source_manifest(config_data[0], {
+        path: None if content is None else content[0] for path, content in source_data.items()})
+    excluded = [os.path.join(context, "work-log", ".ctx.lock")]
+    if output_path is not None:
+        excluded.extend([os.path.abspath(os.fspath(output_path)), os.path.realpath(os.fspath(output_path))])
+    return {"sourceManifest": manifest, "snapshotId": snapshot_id(manifest),
+            "sourceLookup": {row["path"]: row for row in manifest if row["root"] == "context"},
+            "project": {"name": os.path.basename(project),
                         "contextPath": os.path.relpath(context, project).replace(os.sep, "/")},
             "documents": documents, "entries": entries, "warnings": [],
             "collectionStartedAt": started, "collectionFinishedAt": _view_now(),
             "protectedInputs": protected,
-            "excludedPaths": [os.path.abspath(os.fspath(output_path)),
-                              os.path.realpath(os.fspath(output_path)),
-                              os.path.join(context, "work-log", ".ctx.lock")],
+            "excludedPaths": excluded,
             "commitRefs": refs}
 
 
@@ -2727,8 +2802,8 @@ def collect_git_snapshot(project_root, excluded_paths, commit_refs):
                  "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE",
                  "GIT_QUARANTINE_PATH", "GIT_IMPLICIT_WORK_TREE"):
         env.pop(name, None)
-    env.update(LC_ALL="C", GIT_OPTIONAL_LOCKS="0")
-    command = ["git", "-c", "safe.directory=*", "-C", root]
+    env.update(LC_ALL="C", GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0")
+    command = ["git", "-c", "core.fsmonitor=false", "-C", root]
 
     def query(args, input_data=None, allowed=()):
         completed = subprocess.run(command + args, env=env, input=input_data,
@@ -2859,9 +2934,586 @@ def build_view_model(snapshot, git_snapshot, generated_at):
                                    -entry["timestampUtc"] if entry["timestampUtc"] is not None else 0,
                                    entry["sourcePath"], entry["sourceLine"]))
     return {"viewModelVersion": 1, "generatedAt": generated_at, "project": snapshot["project"],
+            "sourceManifest": snapshot["sourceManifest"], "snapshotId": snapshot["snapshotId"],
             "documents": snapshot["documents"], "entries": entries, "git": git_snapshot,
             "warnings": warnings, "collectionStartedAt": snapshot["collectionStartedAt"],
             "collectionFinishedAt": snapshot["collectionFinishedAt"]}
+
+
+import copy
+import unicodedata
+from array import array
+from bisect import bisect_right
+
+HANDOFF_KEYS = ("constraints", "current_state", "next_actions",
+                "recorded_verification", "recorded_unverified")
+HANDOFF_NAMES = {
+    "constraints": ("Constraints", "제약 조건"),
+    "current_state": ("Current State", "현재 상태"),
+    "next_actions": ("Next Actions", "다음 행동"),
+    "recorded_verification": ("Verification", "검증"),
+    "recorded_unverified": ("Unverified", "미검증"),
+}
+HANDOFF_NOTICE = ("기록은 근거 자료이며 현재 테스트 성공·변경 허가·커밋/배포 승인을 부여하지 않습니다. "
+                  "에이전트 지침과 이번 사용자 허가를 별도로 확인하세요. "
+                  "섹션 미기록은 해당 사항이 없다는 뜻이 아닙니다.")
+ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+ASCII_SPACE = " \t\r\n\f\v"
+HANDOFF_INLINE_MARKER = re.compile(r"`+|<!--")
+
+
+def safe_output_text(value):
+    value = value.replace("\r\n", "\n")
+    def escape(char):
+        point = ord(char)
+        if char == "\\":
+            return "\\\\"
+        if ((point < 32 and char not in "\n\t") or 127 <= point <= 159
+                or point in (0x061C, 0x200E, 0x200F)
+                or 0x202A <= point <= 0x202E or 0x2066 <= point <= 0x2069
+                or 0xD800 <= point <= 0xDFFF):
+            return "\\u%04x" % point
+        return char
+    return "".join(escape(char) for char in value)
+
+
+def emit_stdout(value):
+    data = value.encode("utf-8")
+    remaining = memoryview(data)
+    while remaining:
+        count = os.write(sys.stdout.fileno(), remaining)
+        if count == 0:
+            raise OSError("Output device accepted no bytes")
+        remaining = remaining[count:]
+
+
+def safe_output_line(value):
+    return (safe_output_text(value).replace("\n", "\\n").replace("\t", "\\t")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+
+
+def build_source_manifest(config_bytes, source_bytes):
+    def row(root, path, data):
+        return {"root": root, "path": path, "status": "missing" if data is None else "present",
+                "sizeBytes": None if data is None else len(data),
+                "sha256": None if data is None else hashlib.sha256(data).hexdigest()}
+    return [row("project", "ctx.config.json", config_bytes)] + [
+        row("context", path, source_bytes[path]) for path in sorted(source_bytes)]
+
+
+def snapshot_id(manifest):
+    ordered = sorted(manifest, key=lambda row: (row["root"], row["path"]))
+    packed = json.dumps(ordered, ensure_ascii=True, sort_keys=True,
+                        separators=(",", ":")).encode("ascii")
+    return "sha256:" + hashlib.sha256(packed).hexdigest()
+
+
+def source_ref(snapshot, path, start_line, end_line):
+    row = snapshot["sourceLookup"][path]
+    if row["status"] != "present":
+        raise ValueError("Source is missing: " + path)
+    return {"root": "context", "path": path, "startLine": start_line,
+            "endLine": end_line, "sha256": row["sha256"]}
+
+
+def ordered_snapshot_entries(snapshot):
+    def order(entry):
+        timestamp = _view_timestamp(entry["record"].get("createdAt"))
+        return (timestamp is None, -timestamp if timestamp is not None else 0,
+                entry["sourcePath"], entry["sourceLine"])
+    return sorted(snapshot["entries"], key=order)
+
+
+def search_fold(value):
+    return unicodedata.normalize("NFC", value).translate(ASCII_LOWER)
+
+
+def search_terms(query):
+    if not isinstance(query, str) or "\0" in query or len(query) > 256:
+        raise ValueError("query must contain 1..256 Unicode code points")
+    try:
+        query.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise ValueError("query must contain valid UTF-8 text") from error
+    terms = [part for part in re.split(r"[ \t\r\n\f\v]+", search_fold(query)) if part]
+    if not terms or len(terms) > 16:
+        raise ValueError("query must contain 1..16 terms")
+    return list(dict.fromkeys(terms))
+
+
+def build_search_units(snapshot):
+    units = []
+    for doc in snapshot["documents"]:
+        if doc["status"] == "present":
+            units.append({"ref": "document:" + doc["key"], "kind": "document",
+                          "title": doc["path"], "paths": [doc["path"]], "body": doc["text"],
+                          "path": doc["path"], "documentKey": doc["key"]})
+    for entry in ordered_snapshot_entries(snapshot):
+        record = entry["record"]
+        units.append({"ref": "entry:" + entry["key"], "kind": "work_log",
+                      "title": record.get("title") if isinstance(record.get("title"), str) else "",
+                      "paths": [p for p in record.get("files", []) if isinstance(p, str)]
+                               if isinstance(record.get("files"), list) else [],
+                      "body": record.get("summary") if isinstance(record.get("summary"), str) else "",
+                      "path": entry["sourcePath"], "entry": entry})
+    for index, unit in enumerate(units):
+        unit["order"] = index
+    return units
+
+
+def search_units(units, terms, scope):
+    wanted = {"all": None, "documents": "document", "logs": "work_log"}[scope]
+    hits = []
+    for unit in units:
+        if wanted is not None and unit["kind"] != wanted:
+            continue
+        title = search_fold(unit["title"]) if unit["kind"] == "work_log" else ""
+        paths = [search_fold(path) for path in unit["paths"]]
+        body = search_fold(unit["body"])
+        combined = "\n".join([title, body] + paths)
+        if all(term in combined for term in terms):
+            score = sum(4 * (term in title) + 2 * any(term in path for path in paths) + (term in body)
+                        for term in terms)
+            hits.append({"unit": unit, "score": score})
+    return sorted(hits, key=lambda hit: (-hit["score"], hit["unit"]["order"]))
+
+
+def _context_snippet(value, terms):
+    display = unicodedata.normalize("NFC", value)
+    folded = display.translate(ASCII_LOWER)
+    positions = [folded.find(term) for term in terms if term in folded]
+    position = min(positions) if positions else 0
+    start = max(0, position - 40)
+    end = min(len(display), start + 158)
+    return (("…" if start else "") + display[start:end] + ("…" if end < len(display) else ""),
+            start > 0, end < len(display))
+
+
+def make_search_result(snapshot, hit, terms):
+    unit = hit["unit"]
+    fields = []
+    folded_title = search_fold(unit["title"])
+    folded_paths = [search_fold(path) for path in unit["paths"]]
+    folded_body = search_fold(unit["body"])
+    if unit["kind"] == "work_log" and any(t in folded_title for t in terms):
+        fields.append("title")
+    if any(t in path for t in terms for path in folded_paths):
+        fields.append("path")
+    if any(t in folded_body for t in terms):
+        fields.append("body" if unit["kind"] == "document" else "summary")
+    line = None
+    value, snippet_field = unit["path"], "path"
+    if unit["kind"] == "document":
+        for number, content in enumerate(unit["body"].split("\n"), 1):
+            folded = search_fold(content)
+            if any(term in folded for term in terms):
+                line = number
+                value = content[:-1] if content.endswith("\r") else content
+                snippet_field = "body"
+                break
+    else:
+        line = unit["entry"]["sourceLine"]
+        candidates = [("summary", unit["body"]), ("title", unit["title"])] + [("files", p) for p in unit["paths"]]
+        for name, content in candidates:
+            match = None
+            for part in content.split("\n"):
+                folded = search_fold(part)
+                if any(term in folded for term in terms):
+                    match = part
+                    break
+            if match is not None:
+                snippet_field = name
+                value = match
+                break
+    snippet, before, after = _context_snippet(value, terms)
+    return {"ref": unit["ref"], "kind": unit["kind"],
+            "title": unit["title"] if unit["title"] else None, "score": hit["score"],
+            "source": source_ref(snapshot, unit["path"], line, line),
+            "matchedFields": fields, "snippet": snippet, "snippetField": snippet_field,
+            "snippetTruncatedStart": before, "snippetTruncatedEnd": after}
+
+
+def render_search_output(snapshot, hits, options):
+    results = [make_search_result(snapshot, hit, options["terms"]) for hit in hits[:options["limit"]]]
+    payload = {"schemaVersion": 1, "query": options["query"], "scope": options["scope"],
+               "snapshotId": snapshot["snapshotId"], "collectedAt": snapshot["collectionFinishedAt"],
+               "total": len(hits), "returned": len(results), "omittedByLimit": len(hits) - len(results),
+               "results": results}
+    if options["json"]:
+        return json.dumps(payload, ensure_ascii=True, indent=2) + "\n"
+    lines = ["통합 검색 · 결과 {}건 / 표시 {}건".format(len(hits), len(results)),
+             "snapshotId: " + snapshot["snapshotId"]]
+    for result in results:
+        source = result["source"]
+        lines.extend(["", "출처: " + json.dumps(source, ensure_ascii=True),
+                      "제목: " + safe_output_line(result["title"] or "제목 미기록"),
+                      "스니펫: " + safe_output_line(result["snippet"])])
+    return "\n".join(lines) + "\n"
+
+
+class _ContextWarnings:
+    CODES = ("missing_section", "duplicate_heading", "ambiguous_markdown", "unknown_timestamp",
+             "terminal_controls", "bidi_controls", "git_unavailable", "omission")
+
+    def __init__(self):
+        self.groups = {}
+
+    def add(self, code, message, count=1):
+        if count <= 0:
+            return
+        group = self.groups.setdefault(code, {"code": code, "count": 0, "samples": []})
+        group["count"] += count
+        if len(group["samples"]) < 2:
+            group["samples"].append(message[:160])
+
+    def export(self):
+        groups = []
+        for code in self.CODES:
+            if code in self.groups:
+                group = self.groups[code]
+                groups.append(dict(group, omitted=max(0, group["count"] - len(group["samples"]))))
+        return {"total": sum(g["count"] for g in groups), "byCode": groups}
+
+
+def _handoff_comment_start(line, index, code_runs):
+    """Find a real comment opener, skipping balanced inline backtick spans."""
+    if not code_runs:
+        return line.find("<!--", index), False
+    unclosed = False
+    while index < len(line):
+        marker = HANDOFF_INLINE_MARKER.search(line, index)
+        if marker is None:
+            return -1, unclosed
+        start = marker.start()
+        if marker.group(0) == "<!--":
+            return start, unclosed
+        length = len(marker.group(0))
+        escape_start = start
+        while escape_start > 0 and line[escape_start - 1] == "\\":
+            escape_start -= 1
+        if (start - escape_start) % 2:
+            start += 1
+            length -= 1
+            if length == 0:
+                index = marker.end()
+                continue
+        closings = code_runs.get(length, ())
+        following = bisect_right(closings, start)
+        if following < len(closings):
+            index = closings[following] + length
+        else:
+            unclosed = True
+            index = start + length
+    return -1, unclosed
+
+
+def scan_markdown_headings(text):
+    events, fence, comment = [], None, None
+    previous = ""
+    pending_inline_risk = False
+    for number, raw in enumerate(text.split("\n"), 1):
+        line = raw[:-1] if raw.endswith("\r") else raw
+        if number == 1:
+            line = line[1:] if line.startswith("\ufeff") else line
+        if fence:
+            if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(fence[1]) + r",}[ \t]*", line):
+                fence = None
+            previous = ""
+            pending_inline_risk = False
+            continue
+        if comment is None and (line.startswith(("    ", "\t"))
+                                or re.match(r" {0,3}(?:>|[-+*][ \t]+|[0-9]+[.)][ \t]+)", line)):
+            if re.search(r"`{3,}|~{3,}", line):
+                events.append({"line": number, "level": 0, "title": "", "kind": "ambiguous",
+                               "reason": "container_or_indented_fence"})
+            previous = ""
+            pending_inline_risk = False
+            continue
+        # Compact offsets keep inline-code lookups bounded without backtracking.
+        code_runs = {}
+        if "`" in line:
+            for run in re.finditer(r"`+", line):
+                length = run.end() - run.start()
+                if length not in code_runs:
+                    code_runs[length] = array("I")
+                code_runs[length].append(run.start())
+        visible, index, line_inline_risk = [], 0, False
+        while index < len(line):
+            if comment is not None:
+                end = line.find("-->", index)
+                if end < 0:
+                    visible.append(" " * (len(line) - index)); break
+                visible.append(" " * (end + 3 - index)); index = end + 3; comment = None
+            else:
+                start, unclosed_inline = _handoff_comment_start(line, index, code_runs)
+                line_inline_risk = line_inline_risk or unclosed_inline
+                if start < 0:
+                    visible.append(line[index:]); break
+                block_start = start <= 3 and not line[:start].strip(" ")
+                same_line_end = line.find("-->", start + 2)
+                inline_span = not block_start and same_line_end < 0
+                if pending_inline_risk or line_inline_risk or inline_span:
+                    events.append({"line": number, "level": 0, "title": "", "kind": "ambiguous",
+                                   "reason": "inline_comment_span" if inline_span else "multiline_inline_comment"})
+                visible.append(line[index:start])
+                if same_line_end >= 0:
+                    visible.append(" " * (same_line_end + 3 - start))
+                    index = same_line_end + 3
+                else:
+                    visible.append("    ")
+                    index = start + 4; comment = number
+        clean = "".join(visible)
+        marker = re.match(r" {0,3}(`{3,}|~{3,})", clean)
+        if marker:
+            if marker.group(1)[0] == "`" and "`" in line[marker.end():]:
+                events.append({"line": number, "level": 0, "title": "", "kind": "ambiguous",
+                               "reason": "invalid_fence_info"})
+            fence = (marker.group(1)[0], len(marker.group(1)), number)
+            previous = ""
+            pending_inline_risk = False
+            continue
+        heading = re.fullmatch(r"( {0,3})(#{1,6})(?:[ \t]+(.*))?", clean)
+        if heading:
+            title = (heading.group(3) or "").rstrip(" \t")
+            end = len(title)
+            while end > 0 and title[end - 1] == "#":
+                end -= 1
+            if end < len(title) and (end == 0 or title[end - 1] in " \t"):
+                title = title[:end].rstrip(" \t")
+            title = title.strip(ASCII_SPACE)
+            events.append({"line": number, "level": len(heading.group(2)), "title": title,
+                           "kind": "ambiguous" if heading.group(1) else "heading", "reason": "indented_atx"})
+            pending_inline_risk = False
+        elif previous and re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", clean):
+            events.append({"line": number - 1, "level": 2, "title": previous,
+                           "kind": "ambiguous", "reason": "setext"})
+            pending_inline_risk = False
+        elif clean.strip(ASCII_SPACE):
+            pending_inline_risk = pending_inline_risk or line_inline_risk
+        else:
+            pending_inline_risk = False
+        previous = clean if clean.strip(ASCII_SPACE) and not heading else ""
+    if comment is not None:
+        events.append({"line": comment, "level": 0, "title": "", "kind": "ambiguous", "reason": "unclosed_comment"})
+    if fence:
+        events.append({"line": fence[2], "level": 0, "title": "", "kind": "ambiguous", "reason": "unclosed_fence"})
+    return sorted(events, key=lambda event: event["line"])
+
+
+def extract_handoff_sections(plan_document, snapshot, warnings=None):
+    warnings = warnings if warnings is not None else _ContextWarnings()
+    sections = {key: {"key": key, "status": "missing", "blocks": []} for key in HANDOFF_KEYS}
+    if plan_document["status"] == "present":
+        content = plan_document["text"]
+        lines = content.split("\n")
+        aliases = {search_fold(name): key for key, names in HANDOFF_NAMES.items() for name in names}
+        active, start, ambiguous = None, None, False
+
+        def finish(end):
+            if active is None:
+                return
+            section = sections[active]
+            if end == len(lines) and lines[-1] == "":
+                end -= 1
+            text = "\n".join(lines[start - 1:end]) + ("\n" if end < len(lines) else "")
+            meaningful = re.sub(r"<!--(?:-?>|.*?(?:-->|$))", "", text, flags=re.S)
+            has_body = any(line.strip(ASCII_SPACE) and not re.fullmatch(r" {0,3}#{1,6}(?:[ \t].*)?", line)
+                           for line in meaningful.split("\n"))
+            if ambiguous:
+                section["status"] = "ambiguous"
+                section["blocks"] = []
+            elif has_body and section["status"] != "ambiguous":
+                section["status"] = "present"
+                section["blocks"].append({"text": text, "source": source_ref(snapshot, plan_document["path"], start, end)})
+
+        for event in scan_markdown_headings(content):
+            title = search_fold(event["title"])
+            if event["kind"] != "heading":
+                warnings.add("ambiguous_markdown", "{}:{} {}".format(plan_document["path"], event["line"], event["reason"]))
+                if event["kind"] == "ambiguous" and active is not None:
+                    ambiguous = True
+                continue
+            if event["level"] <= 2:
+                finish(event["line"] - 1)
+                active = aliases.get(title) if event["level"] == 2 else None
+                start, ambiguous = event["line"] + 1, False
+                if active is None and any(name in title for name in aliases):
+                    warnings.add("ambiguous_markdown", "near-miss heading at line {}".format(event["line"]))
+        finish(len(lines))
+    for section in sections.values():
+        if section["status"] == "missing":
+            warnings.add("missing_section", "MASTER_PLAN.md: " + HANDOFF_NAMES[section["key"]][0])
+        if len(section["blocks"]) > 1:
+            warnings.add("duplicate_heading", section["key"] + ": repeated sections", len(section["blocks"]) - 1)
+    return [sections[key] for key in HANDOFF_KEYS]
+
+
+def build_handoff(snapshot, git_snapshot, options):
+    warnings = _ContextWarnings()
+    sections = extract_handoff_sections(next(doc for doc in snapshot["documents"] if doc["key"] == "plan"), snapshot, warnings)
+    entries = ordered_snapshot_entries(snapshot)
+    unknown = sum(_view_timestamp(entry["record"].get("createdAt")) is None for entry in entries)
+    warnings.add("unknown_timestamp", "수집된 기록의 시간대/시각 미확인", unknown)
+    if git_snapshot["status"] == "unavailable":
+        warnings.add("git_unavailable", "Git 조회 불가")
+    if options.get("query") is not None:
+        hits = search_units(build_search_units(snapshot), search_terms(options["query"]), "logs")
+        entries = [hit["unit"]["entry"] for hit in hits]
+    records = []
+    for entry in entries[:options["limit"]]:
+        record = entry["record"]
+        records.append({"ref": "entry:" + entry["key"],
+                        "title": record.get("title") if isinstance(record.get("title"), str) else None,
+                        "summary": record.get("summary") if isinstance(record.get("summary"), str) else None,
+                        "recordText": entry["recordText"],
+                        "source": source_ref(snapshot, entry["sourcePath"], entry["sourceLine"], entry["sourceLine"])})
+    return {"schemaVersion": 1, "grantsAuthority": False, "notice": HANDOFF_NOTICE,
+            "snapshotId": snapshot["snapshotId"],
+            "collectedAt": snapshot["collectionFinishedAt"],
+            "status": "complete" if all(s["status"] == "present" for s in sections) else "incomplete",
+            "mandatory": sections,
+            "git": {"status": git_snapshot["status"], "observedAt": git_snapshot["observedAt"],
+                    "branch": git_snapshot.get("branch"), "head": git_snapshot.get("head"),
+                    "changeCount": len(git_snapshot.get("changes", [])) if git_snapshot["status"] == "available" else None},
+            "records": records,
+            "selection": {"available": len(entries), "selected": len(records),
+                          "omittedByLimit": len(entries) - len(records), "omittedByBudget": 0},
+            "_warnings": warnings, "_fragments": {}}
+
+
+def literal_block(text):
+    text = safe_output_text(text)
+    longest = max((len(match.group(0)) for match in re.finditer(r"~+", text)), default=0)
+    fence = "~" * max(3, longest + 1)
+    return fence + "text\n" + text + "\n" + fence + "\n"
+
+
+def _handoff_packet(model):
+    packet = {key: value for key, value in model.items() if not key.startswith("_")}
+    warnings = copy.deepcopy(model["_warnings"])
+    values = [block["text"] for section in model["mandatory"] for block in section["blocks"]]
+    values.extend(value for row in model["records"] for key in ("title", "summary", "recordText")
+                  for value in (row[key],) if isinstance(value, str))
+    stats = {"basis": "selected-source-fields", "crlfPairs": 0, "literalBackslashes": 0, "otherControls": 0}
+    bidi = 0
+    for value in values:
+        stats["crlfPairs"] += value.count("\r\n")
+        stats["literalBackslashes"] += value.count("\\")
+        for char in value.replace("\r\n", "\n"):
+            point = ord(char)
+            is_bidi = point in (0x061C, 0x200E, 0x200F) or 0x202A <= point <= 0x202E or 0x2066 <= point <= 0x2069
+            bidi += is_bidi
+            stats["otherControls"] += ((point < 32 and char not in "\n\t") or 127 <= point <= 159
+                                        or is_bidi or 0xD800 <= point <= 0xDFFF)
+    warnings.add("terminal_controls", "선택 원문에 표시 이스케이프 대상이 있음", stats["otherControls"])
+    warnings.add("bidi_controls", "선택 원문에 bidi 제어문자가 있음", bidi)
+    omitted = model["selection"]["omittedByLimit"] + model["selection"]["omittedByBudget"]
+    warnings.add("omission", "선정 제한 또는 출력 예산으로 추가 기록 생략", omitted)
+    packet.update(warnings=warnings.export(), displayStats=stats)
+    return packet
+
+
+def render_handoff(model, format_name):
+    packet = _handoff_packet(model)
+    cache = model["_fragments"]
+    if format_name == "json":
+        header = {k: v for k, v in packet.items() if k != "records"}
+        fragments = []
+        for row in packet["records"]:
+            key = (format_name, row["ref"])
+            if key not in cache:
+                cache[key] = json.dumps(row, ensure_ascii=True, separators=(",", ":"))
+            fragments.append("    " + cache[key])
+        return (json.dumps(header, ensure_ascii=True, indent=2)[:-2] + ',\n  "records": ['
+                + ("\n" + ",\n".join(fragments) + "\n  " if fragments else "") + "]\n}\n")
+    parts = ["# 근거 있는 인수인계\n", HANDOFF_NOTICE + "\n",
+             "필수 섹션 기재: " + ("기재됨" if packet["status"] == "complete" else "누락/구조 모호") + "\n",
+             "snapshotId: " + packet["snapshotId"] + "\n", "수집 시각: " + packet["collectedAt"] + "\n",
+             "원문은 표시 이스케이프를 적용합니다. CRLF는 LF로 표시되며 원래 값은 JSON에서 확인하세요.\n"]
+    for section in packet["mandatory"]:
+        parts.append("\n## " + HANDOFF_NAMES[section["key"]][1] + " · 문서 기재\n")
+        if section["status"] != "present":
+            parts.append("미기록/구조 모호 · 해당 사항이 없다는 뜻이 아닙니다. MASTER_PLAN.md의 "
+                         + HANDOFF_NAMES[section["key"]][0] + " 제목을 확인하세요.\n")
+        for block in section["blocks"]:
+            parts.append(literal_block(block["text"]))
+            parts.append("출처: " + json.dumps(block["source"], ensure_ascii=True) + "\n")
+    parts.extend(["\n## 생성 시점 Git 조회\n", literal_block(json.dumps(packet["git"], ensure_ascii=True)),
+                  "\n## 선택한 기록 · 당시 보고\n"])
+    for row in packet["records"]:
+        key = (format_name, row["ref"])
+        if key not in cache:
+            cache[key] = ("\n### 작업 기록\n제목:\n" + literal_block(row["title"] or "제목 미기록")
+                          + "요약:\n" + literal_block(row["summary"] or "요약 미기록")
+                          + "원문 JSONL:\n" + literal_block(row["recordText"])
+                          + "출처: " + json.dumps(row["source"], ensure_ascii=True) + "\n")
+        parts.append(cache[key])
+    for label, value in (("선정·생략", packet["selection"]), ("경고 요약", packet["warnings"]), ("표시 대상 통계", packet["displayStats"])):
+        parts.append("\n## " + label + "\n" + literal_block(json.dumps(value, ensure_ascii=True)))
+    parts.append("\n" + HANDOFF_NOTICE + "\n")
+    return "".join(parts)
+
+
+class HandoffBudgetError(ValueError):
+    pass
+
+
+def fit_handoff(model, format_name, max_chars):
+    required = sum(len(block["text"].replace("\r\n", "\n") if format_name == "markdown" else block["text"])
+                   for section in model["mandatory"] for block in section["blocks"])
+    if required > max_chars:
+        raise HandoffBudgetError("Handoff budget exceeded; required source text alone needs at least {} characters".format(required))
+    candidates = model["records"]
+    current = dict(model, records=[])
+    current["selection"] = dict(model["selection"], selected=0, omittedByBudget=len(candidates))
+    rendered = render_handoff(current, format_name)
+    if len(rendered) > max_chars:
+        raise HandoffBudgetError("Handoff budget exceeded; minimum required output needs {} characters".format(len(rendered)))
+    for count, row in enumerate(candidates, 1):
+        if sum(len(row.get(k) or "") for k in ("title", "summary", "recordText")) > max_chars:
+            break
+        attempt = dict(model, records=candidates[:count])
+        attempt["selection"] = dict(model["selection"], selected=count, omittedByBudget=len(candidates) - count)
+        text = render_handoff(attempt, format_name)
+        if len(text) > max_chars:
+            break
+        current, rendered = attempt, text
+    return _handoff_packet(current), rendered
+
+
+def _context_options():
+    action = os.environ["CTX_READER_ACTION"]
+    options = {"query": os.environ["CTX_READER_QUERY"] if os.environ["CTX_READER_HAS_QUERY"] == "1" else None,
+               "scope": os.environ["CTX_READER_SCOPE"], "json": os.environ["CTX_READER_JSON"] == "1"}
+    for name, env, low, high in (("limit", "CTX_READER_LIMIT", 0 if action == "handoff" else 1, 50),
+                                ("max_chars", "CTX_READER_MAX_CHARS", 1000, 100000)):
+        raw = os.environ[env]
+        if not re.fullmatch(r"[0-9]+", raw) or len(raw) > 8 or not low <= int(raw) <= high:
+            raise ValueError("Invalid {}: use {}..{} ASCII digits".format(name, low, high))
+        options[name] = int(raw)
+    if options["scope"] not in ("all", "documents", "logs"):
+        raise ValueError("scope must be all, documents or logs")
+    if action == "search" and options["query"] is None:
+        raise ValueError("search requires --query")
+    if options["query"] is not None:
+        options["terms"] = search_terms(options["query"])
+    return options
+
+
+def run_context_command():
+    if os.environ["CTX_VIEW_OUTPUT"] or os.environ["CTX_VIEW_OPEN"] != "0":
+        raise ValueError("Read-only command cannot write HTML or open a browser")
+    options = _context_options()
+    root, config, context = os.environ["CTX_VIEW_PROJECT"], os.environ["CTX_VIEW_CONFIG"], os.environ["CTX_STORAGE_DIR"]
+    snapshot = collect_snapshot(root, context, config)
+    if os.environ["CTX_READER_ACTION"] == "search":
+        hits = search_units(build_search_units(snapshot), options["terms"], options["scope"])
+        output = render_search_output(snapshot, hits, options)
+    else:
+        git_snapshot = collect_git_snapshot(root, snapshot["excludedPaths"], [])
+        packet = build_handoff(snapshot, git_snapshot, options)
+        _, output = fit_handoff(packet, "json" if options["json"] else "markdown", options["max_chars"])
+    emit_stdout(output)
 
 
 # The renderer has no external resources or runtime file reads.
@@ -2869,7 +3521,10 @@ import base64
 import hashlib
 import json
 
-VIEW_CSS = r""".warning-box summary {
+VIEW_CSS = r""".context-result { width:100%; text-align:left; display:grid; gap:.4rem; overflow-wrap:anywhere; }
+#handoff-text { width:100%; font: .9rem/1.5 ui-monospace,monospace; padding:1rem; }
+mark { background:#fff0a6; color:inherit; }
+.warning-box summary {
   cursor: pointer;
   font-weight: 650;
 }
@@ -3394,7 +4049,7 @@ VIEW_JS = r"""(function () {
     return [entry.key, normalized([text(record.title, ""), text(record.summary, "")].concat(filesOf(entry)).join("\n"))];
   }));
   const labels = {plan:"계획 / MASTER_PLAN", decisions:"결정 / decisions", backlog:"백로그 / backlog", digest:"다이제스트 / timeline digest", completed:"보관된 완료 작업", deprecated:"보관된 결정"};
-  const emptyState = function () { return {tab:"overview", q:"", type:"", from:"", to:"", file:"", entry:"", doc:docsByKey.has("plan") ? "plan" : (documents[0] ? documents[0].key : ""), anchor:"", page:1}; };
+  const emptyState = function () { return {tab:"overview", sq:"", ss:"all", sp:1, q:"", type:"", from:"", to:"", file:"", entry:"", doc:docsByKey.has("plan") ? "plan" : (documents[0] ? documents[0].key : ""), anchor:"", page:1}; };
   const validDate = function (value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     const date = new Date(value + "T12:00:00");
@@ -3438,8 +4093,11 @@ VIEW_JS = r"""(function () {
       const raw = location.hash.slice(1);
       decodeURIComponent(raw);
       const params = new URLSearchParams(raw);
-      const tabs = ["overview", "timeline", "documents"];
+      const tabs = ["overview", "timeline", "documents", "context-search", "handoff"];
       if (tabs.indexOf(params.get("tab")) >= 0) defaults.tab = params.get("tab");
+      if (params.has("sq")) defaults.sq = params.get("sq");
+      if (["all","documents","logs"].includes(params.get("ss"))) defaults.ss=params.get("ss");
+      if (/^[1-9]\d{0,6}$/.test(params.get("sp") || "")) defaults.sp=Number(params.get("sp"));
       if (params.has("q")) defaults.q = params.get("q");
       if (typeValues.indexOf(params.get("type")) >= 0) defaults.type = params.get("type");
       if (fileValues.indexOf(params.get("file")) >= 0) defaults.file = params.get("file");
@@ -3454,13 +4112,14 @@ VIEW_JS = r"""(function () {
     } catch (_) { return defaults; }
   };
   let state = readHash(), composing = false, filtered = [];
-  const writeHash = function () {
+  const writeHash = function (push) {
     const params = new URLSearchParams();
-    ["tab", "q", "type", "from", "to", "file", "entry", "doc", "anchor"].forEach(function (key) { if (state[key]) params.set(key, state[key]); });
+    ["tab", "sq", "ss", "q", "type", "from", "to", "file", "entry", "doc", "anchor"].forEach(function (key) { if (state[key]) params.set(key, state[key]); });
+    if (state.sp > 1) params.set("sp", String(state.sp));
     if (state.page > 1) params.set("page", String(state.page));
     const hash = "#" + params.toString();
     if (location.hash !== hash) {
-      try { history.replaceState(null, "", hash); } catch (_) { location.hash = hash; }
+      try { if(push) history.pushState(null, "", hash); else history.replaceState(null, "", hash); } catch (_) { location.hash = hash; }
     }
   };
   const setState = function (changes) { Object.assign(state, changes); render(); writeHash(); };
@@ -3712,14 +4371,155 @@ VIEW_JS = r"""(function () {
       if (heading) heading.scrollIntoView({block:"start"});
     }
   };
+  // Unified search normalizes lazily and reuses the collected model's ordering.
+  const contextFold = value => value.normalize("NFC").replace(/[A-Z]/g, c => c.toLowerCase());
+  const contextTerms = query => {
+    if (query.length>512 || Array.from(query).length>256 || query.includes("\u0000")) throw Error("검색어는 유효한 UTF-8의 1~256자여야 합니다.");
+    try { encodeURIComponent(query); } catch (_) { throw Error("검색어는 유효한 UTF-8의 1~256자여야 합니다."); }
+    const terms = contextFold(query).split(/[ \t\r\n\f\v]+/).filter(Boolean);
+    if (!terms.length || terms.length > 16) throw Error("검색어를 1~16개 입력하세요. 최대 256자입니다.");
+    return Array.from(new Set(terms));
+  };
+  let contextUnits = null, contextCache = null, contextTimer = null, contextComposing = false;
+  const getContextUnits = () => {
+    if (contextUnits) return contextUnits;
+    const units = documents.filter(doc => doc.status === "present").map(doc => ({ref:"document:"+doc.key, kind:"document", title:doc.path, paths:[doc.path], body:doc.text, path:doc.path, doc}));
+    (model.entries || []).forEach(entry => {
+      const r=recordOf(entry);
+      units.push({ref:"entry:"+entry.key, kind:"work_log", title:text(r.title,""), paths:filesOf(entry), body:text(r.summary,""), path:entry.sourcePath, entry});
+    });
+    units.forEach((u,i) => { u.order=i; u.foldTitle=u.kind === "work_log" ? contextFold(u.title) : ""; u.foldPaths=u.paths.map(contextFold); u.foldBody=contextFold(u.body); });
+    contextUnits=units; return units;
+  };
+  const contextHits = (query,scope) => {
+    if (contextCache && contextCache.query === query && contextCache.scope === scope) return contextCache;
+    const terms=contextTerms(query), wanted={all:null,documents:"document",logs:"work_log"}[scope];
+    const hits=[];
+    getContextUnits().forEach(u => {
+      if (wanted && u.kind !== wanted) return;
+      if (!terms.every(t => u.foldTitle.includes(t) || u.foldBody.includes(t) || u.foldPaths.some(p=>p.includes(t)))) return;
+      const score=terms.reduce((n,t)=>n+4*Number(u.foldTitle.includes(t))+2*Number(u.foldPaths.some(p=>p.includes(t)))+Number(u.foldBody.includes(t)),0);
+      hits.push({unit:u,score});
+    });
+    hits.sort((a,b)=>b.score-a.score || a.unit.order-b.unit.order);
+    contextCache={query,scope,terms,hits}; return contextCache;
+  };
+  const contextSnippet = (value,terms) => {
+    const display=value.normalize("NFC"), folded=contextFold(display);
+    const positions=terms.map(t=>folded.indexOf(t)).filter(i=>i>=0);
+    const position=positions.length ? Math.min.apply(null,positions) : 0;
+    let start=position, end;
+    for(let count=0; count<40 && start>0; count++) { start--; if(start>0 && /[\uDC00-\uDFFF]/.test(display[start]) && /[\uD800-\uDBFF]/.test(display[start-1])) start--; }
+    end=start;
+    for(let count=0;count<158 && end<display.length;count++) end+=display.codePointAt(end)>0xffff ? 2 : 1;
+    return {snippet:(start ? "…" : "")+display.slice(start,end)+(end<display.length ? "…" : ""), snippetTruncatedStart:start>0, snippetTruncatedEnd:end<display.length};
+  };
+  const contextResult = (hit,terms) => {
+    if (hit.result) return hit.result;
+    const u=hit.unit, fields=[];
+    if(u.kind === "work_log" && terms.some(t=>u.foldTitle.includes(t))) fields.push("title");
+    if(terms.some(t=>u.foldPaths.some(p=>p.includes(t)))) fields.push("path");
+    if(terms.some(t=>u.foldBody.includes(t))) fields.push(u.kind === "document" ? "body" : "summary");
+    let line=null, value=u.path, field="path";
+    if(u.kind === "document") {
+      const lines=u.body.split("\n");
+      for(let i=0;i<lines.length;i++) {
+        const folded=contextFold(lines[i]);
+        if(terms.some(t=>folded.includes(t))) { line=i+1; value=lines[i].replace(/\r$/,""); field="body"; break; }
+      }
+    } else {
+      line=u.entry.sourceLine;
+      const candidates=[["summary",u.body],["title",u.title]].concat(u.paths.map(p=>["files",p]));
+      for(const [name,content] of candidates) {
+        const found=content.split("\n").find(part=>{const folded=contextFold(part);return terms.some(t=>folded.includes(t));});
+        if(found !== undefined) {value=found;field=name;break;}
+      }
+    }
+    const manifest=(model.sourceManifest || []).find(row=>row.root === "context" && row.path === u.path);
+    hit.result = Object.assign({ref:u.ref,kind:u.kind,title:u.title || null,score:hit.score,source:{root:"context",path:u.path,startLine:line,endLine:line,sha256:manifest ? manifest.sha256 : null},matchedFields:fields,snippetField:field}, contextSnippet(value,terms));
+    return hit.result;
+  };
+  const highlight = (target,value,terms) => {
+    value=value.normalize("NFC");
+    const folded=contextFold(value), ranges=[];
+    terms.forEach(term=>{let i=0;while((i=folded.indexOf(term,i))>=0){ranges.push([i,i+term.length]);i+=Math.max(1,term.length);}});
+    ranges.sort((a,b)=>a[0]-b[0]); const merged=[];
+    ranges.forEach(r=>{const last=merged[merged.length-1];if(last && r[0]<=last[1]) last[1]=Math.max(last[1],r[1]);else merged.push(r.slice());});
+    let offset=0;
+    merged.forEach(r=>{target.appendChild(document.createTextNode(value.slice(offset,r[0])));target.appendChild(node("mark",value.slice(r[0],r[1])));offset=r[1];});
+    target.appendChild(document.createTextNode(value.slice(offset)));
+  };
+  const goContextResult = (hit,result) => {
+    if (contextTimer !== null) { clearTimeout(contextTimer); contextTimer=null; }
+    writeHash();
+    if(hit.unit.kind === "document") {
+      const hs=docHeadings.get(hit.unit.doc.key)||[];
+      const before=result.source.startLine === null ? [] : hs.filter(h=>h.line<result.source.startLine);
+      Object.assign(state,{tab:"documents",doc:hit.unit.doc.key,anchor:before.length ? before[before.length-1].anchor : ""});
+    } else Object.assign(state,{tab:"timeline",q:"",type:"",from:"",to:"",file:"",entry:hit.unit.entry.key,page:1});
+    render(); writeHash(true);
+  };
+  const renderContextSearch = () => {
+    $("context-search-query").value=state.sq; $("context-search-scope").value=state.ss;
+    const target=$("context-search-results");clear(target);
+    if (!state.sq) {
+      $("context-search-status").textContent="검색어를 입력하세요. 예: timeout cache";
+      $("context-search-page").textContent="";
+      $("context-search-previous").disabled=true;$("context-search-next").disabled=true;return;
+    }
+    let found;
+    try {found=contextHits(state.sq,state.ss);} catch(error) {
+      $("context-search-status").textContent=error.message; $("context-search-page").textContent="";
+      $("context-search-previous").disabled=true;$("context-search-next").disabled=true;return;
+    }
+    const pages=Math.max(1,Math.ceil(found.hits.length/50));state.sp=Math.min(state.sp,pages);
+    found.hits.slice((state.sp-1)*50,state.sp*50).forEach(hit=>{
+      const result=contextResult(hit,found.terms), button=node("button",undefined,"context-result");button.type="button";
+      const rawTitle=result.title || "제목 미기록";
+      const titlePreview=rawTitle.length>160 ? contextSnippet(rawTitle,found.terms).snippet : rawTitle;
+      const title=node("strong");highlight(title,titlePreview,found.terms);button.appendChild(title);
+      const snippet=node("span");highlight(snippet,result.snippet,found.terms);button.appendChild(snippet);
+      button.appendChild(node("span",JSON.stringify(result.source),"source-note"));
+      button.addEventListener("click",()=>goContextResult(hit,result));target.appendChild(button);
+    });
+    if(!found.hits.length) target.appendChild(node("p","일치하는 문서나 작업 기록이 없습니다.","empty-state"));
+    $("context-search-status").textContent="결과 "+found.hits.length+"건 · 키워드 AND · 스냅샷 한정 출처";
+    $("context-search-page").textContent=state.sp+" / "+pages+" 페이지 · 최대 50건";
+    $("context-search-previous").disabled=state.sp<=1;$("context-search-next").disabled=state.sp>=pages;
+  };
+  const renderHandoff = () => {
+    const h=model.handoff || {status:"incomplete",text:""};
+    $("handoff-text").value=h.text;$("handoff-text").readOnly=true;$("handoff-copy").disabled=!h.text;
+    $("handoff-status").textContent=h.status === "budget_exceeded" ? "기본 예산 초과: "+h.error+" · CLI --max-chars를 조절하세요." : (h.status === "complete" ? "필수 섹션 기재됨" : "필수 섹션 누락/구조 모호")+" · 실행·변경 승인이 아닙니다.";
+  };
+  const bindContextControls = () => {
+    const query=$("context-search-query");
+    const submit=()=>{if(contextTimer !== null){clearTimeout(contextTimer);contextTimer=null;}setState({sq:query.value,sp:1});};
+    query.addEventListener("compositionstart",()=>{contextComposing=true;if(contextTimer !== null) clearTimeout(contextTimer);contextTimer=null;});
+    query.addEventListener("compositionend",()=>{contextComposing=false;submit();});
+    query.addEventListener("input",event=>{if(contextComposing || event.isComposing)return;if(contextTimer !== null)clearTimeout(contextTimer);contextTimer=setTimeout(submit,150);});
+    query.addEventListener("keydown",event=>{if(event.key === "Enter" && !contextComposing && !event.isComposing){event.preventDefault();submit();}});
+    $("context-search-scope").addEventListener("change",()=>{if(contextTimer !== null){clearTimeout(contextTimer);contextTimer=null;}setState({sq:query.value,ss:$("context-search-scope").value,sp:1});});
+    $("context-search-previous").addEventListener("click",()=>setState({sp:Math.max(1,state.sp-1)}));
+    $("context-search-next").addEventListener("click",()=>setState({sp:state.sp+1}));
+    $("handoff-copy").addEventListener("click",()=>{
+      const target=$("handoff-text"), fallback=()=>{target.focus();target.select();$("handoff-status").textContent="자동 복사를 사용할 수 없습니다. 선택한 텍스트를 수동 복사하세요 (⌘C / Ctrl+C).";};
+      try {if(typeof navigator === "undefined" || !navigator.clipboard || !navigator.clipboard.writeText){fallback();return;}
+        Promise.resolve(navigator.clipboard.writeText(target.value)).then(()=>{$("handoff-status").textContent="인수인계 내용을 복사했습니다. 원문·누락 사항을 확인하세요.";},fallback);
+      }catch(_){fallback();}
+    });
+  };
+
   const render = function () {
-    ["overview", "timeline", "documents"].forEach(function (tab) {
+    ["overview", "timeline", "documents", "context-search", "handoff"].forEach(function (tab) {
       $("view-" + tab).hidden = state.tab !== tab;
       const button = $("nav-" + tab); if (state.tab === tab) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
     });
     if (state.tab === "overview") renderOverview();
     if (state.tab === "timeline") renderTimeline();
     if (state.tab === "documents") renderDocument();
+    if (state.tab === "context-search") renderContextSearch();
+    if (state.tab === "handoff") renderHandoff();
   };
   $("project-name").textContent = text((model.project || {}).name, "Context viewer");
   $("context-path").textContent = "조회 범위: " + text((model.project || {}).contextPath, "") + " · 허용 문서와 활성·보관 작업 기록";
@@ -3732,7 +4532,7 @@ VIEW_JS = r"""(function () {
   const addOptions = function (target, values) { values.forEach(function (value) { const option = node("option", value); option.value = value; target.appendChild(option); }); };
   addOptions($("type-filter"), typeValues); addOptions($("file-filter"), fileValues);
   documents.forEach(function (doc) { const option = node("option", (labels[doc.key] || doc.key) + (doc.status === "present" ? "" : " · 기록 없음")); option.value = doc.key; $("document-select").appendChild(option); });
-  ["overview", "timeline", "documents"].forEach(function (tab) { $("nav-" + tab).addEventListener("click", function () { setState({tab:tab}); }); });
+  ["overview", "timeline", "documents", "context-search", "handoff"].forEach(function (tab) { $("nav-" + tab).addEventListener("click", function () { setState({tab:tab}); }); });
   ["open-plan-current", "open-plan-next"].forEach(function (id) { $(id).addEventListener("click", function () { goDocument("plan", ""); }); });
   $("search").addEventListener("compositionstart", function () { composing = true; });
   $("search").addEventListener("compositionend", function () { composing = false; setState({q:$("search").value, page:1}); });
@@ -3744,8 +4544,14 @@ VIEW_JS = r"""(function () {
   $("previous-page").addEventListener("click", function () { setState({page:Math.max(1, state.page - 1)}); });
   $("next-page").addEventListener("click", function () { setState({page:state.page + 1}); });
   $("document-select").addEventListener("change", function () { setState({doc:$("document-select").value, anchor:""}); });
-  window.addEventListener("hashchange", function () { state = readHash(); render(); });
+  const restoreHash = function () {
+    if (contextTimer !== null) { clearTimeout(contextTimer); contextTimer=null; }
+    state=readHash(); render();
+  };
+  window.addEventListener("hashchange", restoreHash);
   $("skip-main").addEventListener("click", function (event) { event.preventDefault(); $("main-content").focus(); });
+  window.addEventListener("popstate", restoreHash);
+  bindContextControls();
   renderGit(); renderWarnings(); render();
 }());
 """
@@ -3775,6 +4581,8 @@ VIEW_HTML = r"""<!-- ctx-kit-viewer:1 -->
 <button id="nav-overview" type="button" aria-current="page">개요</button>
 <button id="nav-timeline" type="button">작업 기록</button>
 <button id="nav-documents" type="button">문서</button>
+<button id="nav-context-search" type="button">통합 검색</button>
+<button id="nav-handoff" type="button">인수인계</button>
 </nav>
 <main id="main-content" tabindex="-1">
 <aside id="warnings" class="warning-box" aria-label="수집 경고" hidden>
@@ -3812,6 +4620,20 @@ VIEW_HTML = r"""<!-- ctx-kit-viewer:1 -->
 <p class="source-note">문서 기재 · 내용과 완료 여부를 자동 판정하지 않습니다. 지원하지 않는 문법은 원문으로 표시합니다.</p>
 <div class="document-toolbar field"><label for="document-select">열람할 문서</label><select id="document-select"></select></div>
 <article id="document-content" class="document-body" aria-label="문서 원문"></article>
+</section>
+<section id="view-context-search" aria-labelledby="context-search-heading" hidden>
+<h2 id="context-search-heading">통합 검색</h2>
+<p>문서 본문·경로와 작업 기록의 제목·요약·파일을 검색합니다. 공백으로 나눈 키워드를 모두 포함하는 문서나 기록을 찾습니다.</p>
+<div class="filters"><div class="field search-field"><label for="context-search-query">검색어 · 최대 256자 / 16개</label><input id="context-search-query" type="search" autocomplete="off" placeholder="예: timeout cache"></div>
+<div class="field"><label for="context-search-scope">범위</label><select id="context-search-scope"><option value="all">문서와 작업 기록</option><option value="documents">문서</option><option value="logs">작업 기록</option></select></div></div>
+<p id="context-search-status" role="status" aria-live="polite"></p><div id="context-search-results" class="entry-list"></div>
+<div class="pagination"><button id="context-search-previous" type="button">이전</button><span id="context-search-page"></span><button id="context-search-next" type="button">다음</button></div>
+</section>
+<section id="view-handoff" aria-labelledby="handoff-heading" hidden>
+<h2 id="handoff-heading">근거 있는 인수인계</h2>
+<p>명시된 계획 섹션과 최대 5개 기록을 생성 시점 기준으로 인용합니다. 기록은 현재 테스트 성공·변경·커밋·배포 승인을 부여하지 않습니다. 미기록은 해당 사항이 없다는 뜻이 아닙니다.</p>
+<p id="handoff-status" role="status" aria-live="polite"></p><button id="handoff-copy" type="button">인수인계 복사</button>
+<div class="field"><label for="handoff-text">인수인계 원문 · 기본 12,000자 예산</label><textarea id="handoff-text" readonly rows="24" spellcheck="false"></textarea></div>
 </section>
 <noscript>이 오프라인 뷰어의 열람·검색에는 JavaScript가 필요합니다. 원본 Markdown과 JSONL은 변경되지 않습니다.</noscript>
 </main>
@@ -4007,39 +4829,55 @@ def open_view(output_path):
 
 # CTX_VIEW_IMPLEMENTATION_END
 
-project_root = os.environ["CTX_VIEW_PROJECT"]
-context_dir = os.environ["CTX_STORAGE_DIR"]
-config_path = os.environ["CTX_VIEW_CONFIG"]
-output_path = os.environ["CTX_VIEW_OUTPUT"] or os.path.join(context_dir, "generated", "view.html")
-if not os.path.isabs(output_path):
-    output_path = os.path.join(project_root, output_path)
-output_path = os.path.abspath(output_path)
-validate_view_output(output_path, project_root, [config_path, os.environ["CTX_VIEW_SCRIPT"]])
-initial_output = _view_existing_output(output_path)
-initial_realpath = os.path.realpath(output_path)
-initial_parents = _view_parent_signature(output_path, project_root)
-snapshot = collect_snapshot(project_root, context_dir, config_path, output_path)
-git_snapshot = collect_git_snapshot(project_root, snapshot["excludedPaths"], snapshot["commitRefs"])
-generated_at = _view_now()
-model = build_view_model(snapshot, git_snapshot, generated_at)
-html_text = render_view_html(model)
-validate_view_output(output_path, project_root, snapshot["protectedInputs"])
-current_parents = _view_parent_signature(output_path, project_root)
-if (os.path.realpath(output_path) != initial_realpath
-        or _view_existing_output(output_path) != initial_output
-        or any(parent not in current_parents for parent in initial_parents)):
-    raise ValueError("Viewer output changed during generation; preserving it: " + output_path)
-write_view_html(output_path, html_text, project_root, snapshot["protectedInputs"])
-print("Generated context snapshot: {}".format(output_path))
-print("Snapshot only: regenerate to refresh. Full logs are included; review before sharing.")
-if os.environ["CTX_VIEW_OPEN"] == "1":
+def run_view():
+    project_root = os.environ["CTX_VIEW_PROJECT"]
+    context_dir = os.environ["CTX_STORAGE_DIR"]
+    config_path = os.environ["CTX_VIEW_CONFIG"]
+    output_path = os.environ["CTX_VIEW_OUTPUT"] or os.path.join(context_dir, "generated", "view.html")
+    if not os.path.isabs(output_path):
+        output_path = os.path.join(project_root, output_path)
+    output_path = os.path.abspath(output_path)
+    validate_view_output(output_path, project_root, [config_path, os.environ["CTX_VIEW_SCRIPT"]])
+    initial_output = _view_existing_output(output_path)
+    initial_realpath = os.path.realpath(output_path)
+    initial_parents = _view_parent_signature(output_path, project_root)
+    snapshot = collect_snapshot(project_root, context_dir, config_path, output_path)
+    git_snapshot = collect_git_snapshot(project_root, snapshot["excludedPaths"], snapshot["commitRefs"])
+    generated_at = _view_now()
+    model = build_view_model(snapshot, git_snapshot, generated_at)
+    handoff = build_handoff(snapshot, git_snapshot, {"query": None, "limit": 5})
     try:
-        opened = open_view(output_path)
-        if not opened:
-            raise OSError("the browser launcher reported failure")
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
-        print("Error: HTML was generated at {}, but opening the browser failed: {}".format(
-            output_path, error), file=sys.stderr)
+        packet, text = fit_handoff(handoff, "markdown", 12000)
+        model["handoff"] = {"status": packet["status"], "text": text, "maxChars": 12000}
+    except HandoffBudgetError as error:
+        model["handoff"] = {"status": "budget_exceeded", "text": "", "error": str(error), "maxChars": 12000}
+    html_text = render_view_html(model)
+    validate_view_output(output_path, project_root, snapshot["protectedInputs"])
+    current_parents = _view_parent_signature(output_path, project_root)
+    if (os.path.realpath(output_path) != initial_realpath
+            or _view_existing_output(output_path) != initial_output
+            or any(parent not in current_parents for parent in initial_parents)):
+        raise ValueError("Viewer output changed during generation; preserving it: " + output_path)
+    write_view_html(output_path, html_text, project_root, snapshot["protectedInputs"])
+    print("Generated context snapshot: {}".format(output_path))
+    print("Snapshot only: regenerate to refresh. Full logs are included; review before sharing.")
+    if os.environ["CTX_VIEW_OPEN"] == "1":
+        try:
+            opened = open_view(output_path)
+            if not opened:
+                raise OSError("the browser launcher reported failure")
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            print("Error: HTML was generated at {}, but opening the browser failed: {}".format(
+                output_path, error), file=sys.stderr)
+            sys.exit(1)
+
+if os.environ["CTX_READER_ACTION"] == "view":
+    run_view()
+else:
+    try:
+        run_context_command()
+    except (OSError, ValueError, RecursionError) as error:
+        print("Error: " + safe_output_text(str(error)), file=sys.stderr)
         sys.exit(1)
 PYEOF
 }
@@ -4062,6 +4900,7 @@ case "${1:-help}" in
   log|record) cmd_log "${@:2}" ;;
   timeline) cmd_timeline "${@:2}" ;;
   view)     cmd_view "${@:2}" ;;
+  search|handoff) cmd_context_read "${@:1}" ;;
   backfill) cmd_backfill "${@:2}" ;;
   archive)  cmd_archive "${@:2}" ;;
   hook)     cmd_hook "${@:2}" ;;
