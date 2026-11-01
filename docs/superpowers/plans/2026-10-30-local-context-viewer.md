@@ -1,6 +1,6 @@
 # Local Context Viewer Implementation Plan
 
-> **For agentic workers:** Use `superpowers:executing-plans` and the [parallel execution guide](2026-10-30-local-context-viewer-parallel-execution.md). Steps use checkbox (`- [ ]`) syntax for tracking. 사용자는 2026-10-30 새 세션에서 병렬 구현 시작을 승인했다. commit·push·PR 생성은 별도 지시 없이 수행하지 않는다.
+> 초기 뷰어의 설계·구현·검증 기록이다. 작업 분담과 의존 관계는 [병렬 실행 가이드](2026-10-30-local-context-viewer-parallel-execution.md)를 참고한다. 체크리스트는 구현 및 검증의 완료 여부를 나타낸다.
 
 **Goal:** ctx-kit의 현재 문서와 활성·보관 작업 기록을 한 개의 오프라인 HTML로 탐색하여, 프로젝트 재개 시 현재 상태와 다음 행동을 1분 안에 파악하도록 돕는다.
 
@@ -13,13 +13,20 @@
 ## 1. 문서 상태와 조사 근거
 
 - 작성일: 2026-10-30, Asia/Seoul.
-- 상태: Claude 제안 검토와 로컬 코드 대조를 반영한 계획의 **구현·통합 완료**. 2026-10-30 실제 검증과 미실시 항목은 13절에 기록했다.
-- 조사 기준: Git HEAD `09bed94`와 계획 작성 중의 작업 트리. 작업 중 `ctx.sh`, `tests/test_git_metadata.py`에도 별도 변경이 관찰되어 구현 시작 시 다시 확인해야 한다.
-- 실행 준비 시점: Git 메타데이터 변경이 `537e1a3`에 커밋된 것을 확인했다. 현재 브랜치는 `codex/git-log-metadata`이며 기능 구현 전 새 `codex/` 브랜치를 만든다. 계획과 검토 문서는 미추적 상태이므로 새 세션에 경로를 명시해 전달한다.
-- 보호 대상: 기존 `contracts/`, Git 메타데이터 관련 변경을 포함한 타 작업 결과. 이번 계획에서 수정·되돌리기·스테이징하지 않는다.
+- 상태: 초기 뷰어와 후속 통합 검색·근거 있는 인수인계의 **구현·통합 및 `main` 머지 완료**. [PR #7](https://github.com/nemory-dev/ctx-kit/pull/7)은 `75dac4e`로 머지됐다. 실제 브라우저 최종 확인과 사람의 1분 재개 평가는 남아 있다.
+- 정리 기준: 2026-11-01, `main`의 `75dac4e`. 2~12절은 초기 뷰어의 설계·구현 계획, 13절은 구현 커밋 전 기록, 14절의 실행 결과는 초기 뷰어 커밋 `6c0eb86`의 후속 검증 기록이다. 과거 수치를 현재 버전의 결과로 바꾸지 않는다.
+- 초기 구현 기준: Git 메타데이터 처리가 반영된 `537e1a3`의 CLI·저장소·테스트 구조를 바탕으로 개발했다.
 - Claude 검토는 제안문만 대상으로 수행했다. 저장소를 읽은 코드 리뷰와 구분한다. [검토 원문](../reviews/2026-10-30-local-viewer-claude.md)에 응답을 그대로 보존했다.
 
-현재 코드에서 확인한 사실:
+구현 단계별 기준과 검증 범위:
+
+| 단계 | 기준 커밋 | 검증 범위·근거 |
+| --- | --- | --- |
+| 초기 오프라인 뷰어 | `6c0eb86` | 뷰어 테스트 70개, 전체 회귀 258개. 당시 실행 환경과 수치는 13~14절에 보존한다. |
+| 통합 검색·근거 있는 인수인계 추가 | `35893f8` | 뷰어 테스트 75개, 전체 회귀 331개 구성. 최종 실행 결과·플랫폼별 범위·성능은 [후속 구현 결과](../reports/2026-11-01-search-handoff-implementation.md)에 기록했다. |
+| `main` 머지 후 CI | `75dac4e` | [CI 성공](https://github.com/nemory-dev/ctx-kit/actions/runs/41287543903). macOS는 331개 통과, Ubuntu는 330개 통과·대소문자를 구분하지 않는 파일시스템이 필요한 1개 건너뜀. 두 환경의 Bash 문법 검사도 통과했다. |
+
+계획 작성 당시 코드에서 확인한 사실:
 
 | 근거 | 확인 내용 | 설계에 미치는 영향 |
 |---|---|---|
@@ -31,7 +38,6 @@
 | `cmd_archive()`, `tests/test_storage.py` | 동일 내용이나 legacy ID 충돌도 별개 기록으로 보존한다. 중단 시 journal과 겹치는 레코드가 남을 수 있다. | 중복 제거를 하지 않고, 미완료 archive가 있으면 생성을 중단한다. |
 | 내장 문서 템플릿 | 계획과 ADR은 편집 가능한 Markdown이며 고정 JSON 스키마가 아니다. | 섹션을 읽되 내용의 정당성·결정 효력을 자동 판정하지 않는다. |
 | `tests/`, `.github/workflows/ci.yml` | 임시 프로젝트에 CLI를 복사하는 unittest, Linux/macOS 검사 | 새 테스트도 실제 복사 설치를 사용한다. |
-| `contracts/README.md` | 향후 work-event 계약과 별도 구현 요구사항을 기술한다. | 현재 timeline의 구현 스키마로 간주하지 않고 이번 작업에서 이관하지 않는다. |
 
 ## 2. Claude 의견 취합과 최종 판단
 
@@ -71,7 +77,7 @@
 - 코드 전문 수집, 함수·호출 관계 분석, rename 추적, 코드 diff 표시.
 - AI 요약·RAG·의미 검색, 로그에서 테스트 결과를 추출한 현재 상태 배지.
 - 결정과 파일의 추론 연결, 결정 유효성 판정, pending 기록의 커밋 추정.
-- 여러 프로젝트 통합, 원격 공유·호스팅·로그인, work-event 계약 이관.
+- 여러 프로젝트 통합, 원격 공유·호스팅·로그인.
 
 ## 4. 사용자 흐름과 화면
 
@@ -149,7 +155,7 @@ archive/timeline-*.jsonl
 
 ### 5.2 내부 모델 예시
 
-아래는 HTML 내부 데이터 형식이며 새 공개 저장 형식이나 `contracts/`의 대체물이 아니다.
+아래는 HTML 내부 데이터 형식이며 새 공개 저장 형식은 아니다.
 
 ```json
 {
@@ -243,11 +249,11 @@ archive/timeline-*.jsonl
 | `docs/en/workflows.md`, `docs/ko/workflows.md` | 생성·열기·재생성·검색·출력 경로 변경 절차. |
 | `docs/en/troubleshooting.md`, `docs/ko/troubleshooting.md` | 미완료 archive, 손상 로그, 잠금, 출력 보호, 브라우저 실행 실패. |
 
-`AGENT_RULES.md`, 내장 규칙 템플릿, `ctx.config.json` 기본값, CI 설정, `contracts/`는 변경하지 않는다. 기존 `source`를 사용하므로 새 설정 키도 필요하지 않다.
+`AGENT_RULES.md`, 내장 규칙 템플릿, `ctx.config.json` 기본값, CI 설정은 변경하지 않는다. 기존 `source`를 사용하므로 새 설정 키도 필요하지 않다.
 
 ## 10. 구현 작업: 조사 → 수정 → 검증 → 정리
 
-각 작업은 테스트 추가 → 미구현·부족 동작에 의한 실패 확인 → 최소 구현 → 해당 테스트 성공 순서로 진행한다. 중간 commit은 사용자의 지시가 있을 때만 수행한다.
+각 작업은 테스트 추가 → 미구현·부족 동작에 의한 실패 확인 → 최소 구현 → 해당 테스트 성공 순서로 진행한다.
 
 병렬 실행 시 기능 범위는 유지하면서 테스트 파일을 위 소유권 표에 따라 분리한다. Task 2~3은 데이터 담당, Task 4~5는 화면 담당, Task 6은 저장 담당이 소유한다. Task 0~1과 최종 통합은 통합 담당이 수행한다. 의존 관계와 함수 계약은 병렬 실행 가이드를 따른다.
 
@@ -382,7 +388,8 @@ self.assertEqual(self.source_snapshot(), sources_before)
 
 ## 13. 구현·검증 기록 (2026-10-30, Asia/Seoul)
 
-- 작업 브랜치: `codex/local-context-viewer`, 시작 HEAD `537e1a3`. 기존 `contracts/`는 수정하지 않았다. commit·push·PR·배포는 수행하지 않았다.
+아래는 구현 커밋 전 기록이다. 이후 `6c0eb86` (`feat: add offline local context viewer`)으로 커밋했으며, 해당 커밋에서 이어진 검증은 14절에 구분했다.
+
 - 통합 코드: `ctx.sh`에 수집·Git·모델·HTML/CSS/JS·출력 보호를 내장했다. 실행 시 두 파일 복사 설치와 Python 표준 라이브러리만 필요하다. Node는 선택적 테스트 도구다.
 - 시작 검사: `bash -n ctx.sh` 성공, 기존 unittest 188개 통과(89.601초).
 - 최종 검사: `bash -n ctx.sh` 성공, `python3 -B -m unittest discover -s tests -v` **258개 통과(115.760초)**. 새 뷰어 테스트는 70개다. `git diff --check` 통과.
@@ -404,11 +411,11 @@ self.assertEqual(self.source_snapshot(), sources_before)
 
 ### 브라우저 검증 범위와 남은 확인
 
-도구 정책 차단 전 Headless Chromium 145.0.7632.6에서 `file://` 열람, 개요·검색·50행 페이지·정확한 NFC/NFD 파일 필터·hash 복원·문서 내부 링크·pending 미확인 표시를 검증했다. 1280/768/390px 화면을 확인했고 390px 가로 overflow는 없었다. script/HTML/외부 이미지 공격 문자열을 문서와 로그에서 열어도 실행·이미지 생성·자동 HTTP 요청이 없었고 콘솔 오류도 없었다. 1차 UI 브라우저 검색은 5,000건 2.4~5.6ms, 20,000건 5.0~6.9ms였다.
+중간 구현을 Headless Chromium 145.0.7632.6에서 `file://`로 열어 개요·검색·50행 페이지·정확한 NFC/NFD 파일 필터·hash 복원·문서 내부 링크·pending 미확인 표시를 검증했다. 1280/768/390px 화면을 확인했고 390px 가로 overflow는 없었다. script/HTML/외부 이미지 공격 문자열을 문서와 로그에서 열어도 실행·이미지 생성·자동 HTTP 요청이 없었고 콘솔 오류도 없었다. 1차 UI 브라우저 검색은 5,000건 2.4~5.6ms, 20,000건 5.0~6.9ms였다.
 
-그 뒤 실제 Chrome 도구의 `file://` 열기가 보안 정책으로 거부되어 우회 접근을 하지 않았다. 이후 경고 페이지·파서 방어·원문 표시·skip link 수정은 실제 내장 JS의 Node 회귀로 검증했으며 최종 브라우저 재검증과 명시적 HTTPS 링크 클릭은 미실시했다. Safari 자동화는 시간 초과, Firefox는 미실시다. 실제 사람의 Markdown 대비 1분 재개 평가는 수행하지 않았으므로 달성으로 선언하지 않는다.
+이후 경고 페이지·파서 방어·원문 표시·skip link 수정은 실제 내장 JS의 Node 회귀로 검증했다. 최종 코드의 Chrome/Safari 재검증과 명시적 HTTPS 링크 클릭, Firefox 검증은 미실시다. 실제 사람의 Markdown 대비 1분 재개 평가는 수행하지 않았으므로 달성으로 선언하지 않는다.
 
-현재 저장소 설정이 가리키는 `sample-context/`는 존재하지 않는다. 저장소 자체에서 `bash ctx.sh view`는 `init` 안내와 종료 1을 반환하는 것을 확인했고 임의 초기화하지 않았다. 이미 초기화된 대상 프로젝트에서는 다음 명령을 사용한다.
+컨텍스트가 초기화된 대상 프로젝트에서 다음 명령으로 뷰어를 생성하고 연다.
 
 ```bash
 bash ctx.sh view --open
@@ -417,3 +424,141 @@ bash scripts/ctx.sh view --open
 ```
 
 수동 후속 확인은 생성 파일을 Chrome/Safari에서 직접 열어 검색·키보드·HTTPS 링크를 확인하고, 처음 보는 컨텍스트의 현재 상태와 다음 행동을 1분 안에 파악할 수 있는지 측정하는 것이다.
+
+## 14. 후속 호환성·사용성 검증 (2026-10-30, Asia/Seoul)
+
+### 14.1 실제 실행 환경과 한계
+
+이 절의 실행 결과는 초기 뷰어 커밋 `6c0eb86`을 기준으로 한다. 해당 후속 검증에서 구현 결함은 발견하지 않았으며 코드·테스트·CI 설정은 변경하지 않았다. 통합 검색·인수인계 추가 후 결과는 1절의 후속 구현 결과와 머지 후 CI를 참고한다.
+
+| 실제 환경 | 실행한 검증 | 결과 |
+| --- | --- | --- |
+| macOS arm64 / Bash 3.2.57 / Python 3.9.6 | 뷰어 unittest 전체 | 70개 통과, 14.659초 |
+| macOS arm64 / Bash 3.2.57 / Python 3.13.3 | 뷰어 unittest 전체 | 70개 통과, 12.763초 |
+| Linux aarch64 / Bash 5.2.15 / Python 3.11.15 / Git 2.39.5 | 뷰어 unittest 전체 | 69개 통과, Node 미설치로 1개 건너뜀, 6.442초 |
+| Linux aarch64 / Python 3.11.16 / Node 20.20.2 | 위에서 건너뛴 `test_browser_logic_search_filters_pages_and_hash` | 1개 통과, 0.292초 |
+| Python 3.7 | 실행 환경 미확보 | 실제 실행 미실시. 13절의 AST 검사는 구문 호환 증거만 제공 |
+| Windows | 실행 환경 미확보 | 미실시. 기존 launcher/CRLF 모의 테스트를 Windows 실행으로 간주하지 않음 |
+
+macOS 검증은 CLI 자식 프로세스도 같은 Python을 선택하도록 `PATH`를 지정했다. Node 테스트는 화면을 그리지 않는 DOM 대역에서 내장 JS를 실행하므로 실제 브라우저·키보드·화면 페인트 검증을 대신하지 않는다. 기존 Python 3.11.8의 전체 회귀 258개 결과는 13절에 보존했고, 코드 변경이 없어 후속 세션에서 반복하지 않았다.
+
+아래 명령은 실행한 checkout의 테스트를 대상으로 한다. 표의 70개 구성으로 재현하려면 별도로 준비한 `6c0eb86` checkout에서 실행한다. 현재 기준 `75dac4e`에서는 `test_view_context.py` 5개가 추가되어 뷰어 테스트 대상이 75개다. 각 Python 버전을 검사할 때는 해당 실행 파일이 `PATH`의 `python3`로 선택되는 환경을 준비해 CLI 자식 프로세스에도 같은 버전을 적용한다.
+
+```bash
+# 검증할 Python 환경과 checkout 루트에서 실행한다.
+python3 --version
+python3 -B -m unittest discover -s tests -p 'test_view*.py' -v
+```
+
+Linux 검증은 네트워크를 차단하고 소스·루트 파일시스템을 읽기 전용으로 둔 두 독립 환경에서 수행했다. Python 3.11.15 환경의 뷰어 테스트 70개 중 Node가 필요한 1개는 건너뛰었고, 해당 테스트만 Python 3.11.16·Node 20.20.2 환경에서 실행했다. 서로 다른 두 환경의 결과를 한 환경에서 전체 통과한 것으로 합산하지 않는다. 복사한 테스트 구성은 `6c0eb86` 기준이므로 현재 `main` 전체의 검증 결과로 해석하지 않는다.
+
+### 14.2 합성 fixture 재현
+
+전제 조건은 기존 Bash·Git·Python 3.7 이상과 이 저장소 checkout이다. 저장소 루트에서 아래 블록을 실행하면 시스템 임시 폴더 아래에 55건·5,000건·20,000건 프로젝트를 만든다. 사용자 컨텍스트를 읽거나 초기화하지 않으며 브라우저도 열지 않는다. JSONL은 활성/보관으로 나누고 동일 발생 2건·NFC/NFD 파일 경로·시간대 없는 legacy 1건·공격 문자열을 포함한다. 프로젝트가 Git 관리 밖인 것은 의도된 상태다.
+
+이 예제는 초기 뷰어의 작업 기록 탐색·원본 보존·출력 크기를 확인하기 위한 입력이다. `MASTER_PLAN.md`에는 `현재 상태`와 `다음 행동`만 있으며, 현재 인수인계가 요구하는 `제약 조건`·`검증`·`미검증` H2는 없다. 따라서 현재 `main`에서 인수인계의 `incomplete` 표시는 정상이다. 기존 측정과 비교할 수 있도록 예제 입력은 유지한다. 필수 섹션을 갖춘 통합 검색·인수인계 검증에는 [최신 평가 fixture와 절차](../../../tests/fixtures/context-read/evaluation.md)를 사용한다.
+
+```bash
+python3 -B - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import time
+import unicodedata
+
+repo = Path.cwd()
+assert (repo / "ctx.sh").is_file(), "저장소 루트에서 실행하세요."
+attack = json.loads((repo / "tests/fixtures/viewer/html/attacks.json").read_text(encoding="utf-8"))
+root = Path(tempfile.mkdtemp(prefix="ctx-kit-view-manual-")).resolve()
+for count in (55, 5000, 20000):
+    project = root / str(count)
+    context = project / "context"
+    (context / "work-log").mkdir(parents=True)
+    (context / "archive").mkdir()
+    shutil.copy2(repo / "ctx.sh", project / "ctx.sh")
+    config = project / "ctx.config.json"
+    config.write_text(json.dumps({"source": "context/AGENT_RULES.md", "agent_rules": [],
+                                 "git_sync": {"enabled": False}}), encoding="utf-8")
+    plan = context / "MASTER_PLAN.md"
+    plan.write_text("# 합성 재고 조회 도구\n\n## 현재 상태\n"
+                    "캐시 조회 구현 완료. 네트워크 타임아웃 복구는 미검증.\n\n"
+                    "## 다음 행동\n- [ ] 타임아웃 복구 테스트 작성\n"
+                    "- [ ] 실패 시 캐시 안내 확인\n\n"
+                    "[결정](decisions.md#재시도-결정) · [HTTPS 확인](https://example.com/)\n",
+                    encoding="utf-8")
+    decisions = context / "decisions.md"
+    decisions.write_text("# 재시도 결정\n자동 재시도는 한 번으로 제한한다.\n\n" + attack["markdown"],
+                         encoding="utf-8")
+    nfc = "src/한글.kt"
+    nfd = unicodedata.normalize("NFD", nfc)
+    records = [{"id": "fixture-%d" % i, "title": "작업 %05d" % i,
+                "summary": "합성 검색 needle", "createdAt": "2026-10-30T12:00:00+09:00",
+                "type": "work" if i % 2 == 0 else "decision", "commit": "pending",
+                "branch": "fixture", "dirty": False, "files": [nfc if i % 2 == 0 else nfd]}
+               for i in range(count)]
+    records[1].update(title=attack["title"], summary=attack["summary"])
+    records[-2] = dict(records[0])  # 같은 행을 archive와 active에 각각 보존한다.
+    records[-1] = {"id": "legacy", "title": "시각 없는 legacy", "type": "legacy",
+                   "summary": "시간대 없는 원문", "createdAt": "2026-10-30T12:00:00", "files": []}
+    paths = [context / "archive/timeline-2026-10.jsonl", context / "work-log/timeline.jsonl"]
+    for path, items in zip(paths, (records[:count // 2], records[count // 2:])):
+        path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in items), encoding="utf-8")
+    inputs = [config, plan, decisions] + paths
+    before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+    input_bytes = sum(p.stat().st_size for p in inputs)
+    assert input_bytes <= 20 * 1024 * 1024
+    started = time.perf_counter()
+    result = subprocess.run(["bash", str(project / "ctx.sh"), "view"], cwd=project,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, timeout=45)
+    elapsed = time.perf_counter() - started
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert before == {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+    output = context / "generated/view.html"
+    print(json.dumps({"records": count, "input_bytes": input_bytes, "html_bytes": output.stat().st_size,
+                      "generation_seconds": round(elapsed, 3), "html": str(output)}, ensure_ascii=False))
+print("fixture_root=" + str(root))
+PY
+```
+
+출력된 `fixture_root`와 각 HTML 경로를 보관한다. 아래 수동 확인에는 이 파일을 사용하며 로컬 서버를 띄우지 않는다. 생성 실패 시 stderr의 대상 경로를 확인하고, fixture 문제를 해결하려고 기존 사용자 컨텍스트를 수정하지 않는다. 재실행하면 별도의 임시 폴더를 만든다.
+
+위 블록을 초기 뷰어 커밋 `6c0eb86`의 macOS/Python 3.11.8 환경에서 그대로 실행해 종료 0을 확인했다. 모든 크기에서 원본 SHA-256 보존, 모델 행 수, 활성/보관의 동일 발생 2건, NFC/NFD 경로 분리, 시각 미확인 1건, Git 관리 밖 상태를 확인했다. 아래는 당시 이 재현 fixture의 CLI 측정이며 13절과 입력 내용이 다르다. 브라우저 검색·화면 표시 시간은 측정하지 않았다.
+
+| 기록 수 | 입력 bytes (설정 포함) | HTML bytes | 생성 시간 |
+| --- | ---: | ---: | ---: |
+| 55 | 13,565 | 85,765 | 0.118초 |
+| 5,000 | 1,174,654 | 3,986,196 | 0.192초 |
+| 20,000 | 4,709,652 | 15,856,199 | 0.449초 |
+
+2026-11-01 문서 검토에서 `6c0eb86`과 `main`의 `75dac4e`로 같은 예제를 각각 재실행했다. 두 버전 모두 세 크기의 생성·입력 SHA-256 보존·모델 행 수·동일 발생 보존 검사가 통과했다. 초기 커밋의 입력 크기와 HTML 크기는 위 표와 일치했다. 현재 버전에는 통합 검색·인수인계 모델과 화면이 추가되어 HTML 크기가 달라지므로 위 표를 현재 버전의 크기·성능 보장으로 사용하지 않는다. 최신 코드의 별도 합성 성능 측정은 [후속 구현 결과](../reports/2026-11-01-search-handoff-implementation.md)를 참고한다.
+
+### 14.3 사람이 수행할 Chrome/Safari 확인 (미실시)
+
+다음은 **사람이 자신의 브라우저에서 수행할 절차**이며 아직 실행 결과가 기록되지 않았다. Chrome과 Safari 각각 결과·브라우저 버전·OS/기종·화면 폭·일시·실패 지점을 기록한다. Firefox는 사용 가능할 때만 같은 절차를 수행한다.
+
+아래 체크리스트는 초기 뷰어의 작업 기록 탭과 문서 열람을 대상으로 한다. 현재 버전의 통합 검색·출처 이동·인수인계 복사 성공/권한 거부/API 없음 확인은 [최신 브라우저 평가 절차](../../../tests/fixtures/context-read/evaluation.md#실제-브라우저-확인-미실시)를 함께 따른다. 실제 브라우저·복사 권한·화면 그리기 검증을 Node DOM 대역의 통과로 대체하지 않는다.
+
+- [ ] 55건 `view.html`을 브라우저의 ‘파일 열기’로 연다. 생성 시각, 현재 상태, 다음 행동, Git 관리 밖 표시를 확인한다. 1280/768/390px 폭에서 본문과 조작부가 가려지지 않고 가로 스크롤 없이 읽히는지 확인한다.
+- [ ] 키보드만으로 Tab/Shift+Tab, 본문 이동, 탐색, 검색, 각 필터, 행 선택, 페이지 이동, 문서 선택을 조작한다. 포커스가 보이고 Enter/Space로 해당 버튼이 동작하며 상세와 다음 행동까지 도달하는지 확인한다. Safari에서 필요하면 ‘Tab 키로 웹 페이지의 각 항목 하이라이트’ 설정을 켜고 그 조건도 기록한다.
+- [ ] 작업 기록은 55건, 첫 페이지 50건, 다음 페이지 5건이다. `작업 00010`은 1건, `작업 00000`은 archive/active 출처가 다른 2건으로 표시된다. 없는 검색어는 0건, 필터 해제는 55건으로 돌아온다.
+- [ ] 한글 IME 조합 중에는 검색이 확정되지 않고 조합 완료 후 반영된다. `한글.kt`와 NFD `한글.kt`로 같은 54건을 찾되, 정확한 파일 필터의 NFC/NFD 두 항목은 각각 28건/26건으로 좁혀진다. 필터 해제 후 Asia/Seoul에서 2026-10-30 날짜를 선택하면 시각 미확인 legacy 1건이 제외되어 54건이 된다.
+- [ ] 검색·선택 후 URL hash를 복사하고 같은 파일을 다시 열어 hash를 붙이면 상태가 복원된다. 계획 문서의 ‘결정’ 링크가 결정 문서 제목으로 이동하고, pending과 dirty=false가 현재 완료·깨끗한 작업 트리를 증명하는 것처럼 표시되지 않는지 확인한다.
+- [ ] 개발자 도구 Network 기록을 시작하고 새로고침·검색·페이지 이동·모든 문서 열람과 `ctxAttack` 검색 결과의 상세 선택을 한다. HTML 자체의 `file://` 읽기 외에 뷰어에서 시작한 자동 HTTP(S) 요청이 없어야 한다. Console의 예상하지 못한 오류가 없고, `globalThis.ctxAttack`은 `undefined`, 공격 문자열은 텍스트, 외부 이미지는 미로딩, `javascript:`는 비링크인지 확인한다.
+- [ ] 자동 요청 확인 후 계획 문서의 ‘HTTPS 확인’을 직접 눌러 `https://example.com/`이 새 탭으로 열리는지 확인한다. 사용자 클릭으로 발생한 요청은 자동 요청과 구분한다. 외부 통신이 불가능한 환경이면 클릭 확인을 미실시로 남긴다.
+- [ ] 5,000건/20,000건 HTML도 열어 검색·페이지 이동이 가능하고 작업 목록 DOM 행이 최대 50개인지 확인한다. 작업 기록 탭에서 Console의 `document.querySelectorAll("#entry-list > *").length`로 센다. DevTools Performance에서 같은 검색어를 여러 번 입력해 입력 확정부터 화면 갱신까지 측정한다. 5,000건 생성 3초/검색 200ms 이내라는 잠정 목표를 평가하고 Node 동기 시간과 브라우저 그리기 시간을 혼동하지 않는다.
+
+### 14.4 Markdown 대비 1분 재개 평가 (미실시)
+
+fixture 내용을 아직 모르는 평가자가 파일을 연 순간부터 ‘현재 상태’, ‘다음 행동 2개’, ‘미검증 사항’, ‘근거 문서’를 설명할 때까지 잰다. 준비자는 위 합성 데이터의 답을 읽었으므로 처음 보는 평가자로 세지 않는다. 1분 이내여도 설명이 틀리면 미달성이다.
+
+같은 55건 fixture의 `context/MASTER_PLAN.md`, `decisions.md`, 두 JSONL을 사용해 한 명은 HTML, 다른 한 명은 Markdown/JSONL을 처음 보는 조건으로 비교한다. 처음 보는 평가자가 한 명뿐이면 열람 순서를 추첨하고, 두 번째에는 학습 효과가 있음을 명시해 참고 비교로만 남긴다. 결과를 입력하기 전에는 ‘1분 달성’으로 기록하지 않는다.
+
+| 익명 참여자 ID/처음 보는지 | 환경·브라우저 버전 | HTML 초/정답 여부 | Markdown 초/정답 여부 | 열람 순서·의견 |
+| --- | --- | --- | --- | --- |
+| 미실시 | — | — | — | — |
+
+남은 미검증 항목은 Python 3.7 실행·Windows·최종 Chrome/Safari 조작/그리기/HTTPS·사람의 재개 평가다. 이들을 완료하기 전에는 Task 5/7의 해당 체크를 완료로 바꾸지 않는다.
