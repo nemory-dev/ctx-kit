@@ -69,6 +69,10 @@ Read-only reviews need no context edits or work-log entry. Explicit no-logging o
 
 Without `--commit`, `log` records `uncommitted` when Git reports changes; otherwise it uses the current short commit when available. Without `--files`, it derives paths from that commit or the working tree. These are metadata defaults, so explicit relevant paths help keep the record accurate. Logging does not create a project commit.
 
+Automatic paths preserve Unicode, whitespace, line breaks, quotes, and backslashes rather than Git display escaping. Working-tree renames and copies use the destination path. Untracked directories are expanded into file paths even when `status.showUntrackedFiles` hides them by default; the runtime lock remains excluded. A failed Git status or commit-file query stops logging before adding a row. Logging outside a Git repository remains supported.
+
+Commit references are resolved before writing, including when `--files` is explicit. An invalid reference fails without adding a row. For a clean project, or an explicit commit, file names are read from the resolved full hash so a concurrent HEAD update cannot change which commit supplies them. A repository without its first commit still records `uncommitted`.
+
 ## Find recent work or import Git history
 
 ```bash
@@ -94,13 +98,92 @@ bash ctx.sh timeline --limit 5 --json
 
 `backfill` imports Git commit messages, dates, and file names. It cannot reconstruct uncommitted work or validation results that were not recorded in Git.
 
+File paths and commit fields are read with NUL separators, so unusual file names and message text such as `__CTX_FILES__` or `__CTX_COMMIT_START__` do not split or truncate imported records. Empty commits keep an empty file list.
+
 | Option | Meaning |
 | --- | --- |
 | `--limit`, `-n` | Number of recent Git commits to inspect; default `30`. |
 | `--all` | Inspect the entire Git history instead of applying the limit. Review the possible volume before using it. |
 | `--type` | Label applied to imported entries; default `work`. |
 
-With no Git commits, `backfill` reports that there is nothing to import. It skips commits already represented in the **active** log. It does not check monthly archives, so repeating a backfill after archiving can import those commits again. Choose a limited range appropriate to your adoption workflow and inspect the result.
+With no Git commits, `backfill` reports that there is nothing to import. It skips commits represented by `commit` or `fullCommit` in the active log or any `archive/timeline-*.jsonl` file, including the legacy archive. Legacy hash-only references are resolved in one Git batch, so a change to `core.abbrev` does not reimport them. An ambiguous reference stops backfill; preserve the record and identify its full commit ID before retrying. Repeating a backfill after archiving leaves those commits archived. Invalid archive JSONL stops backfill before rewriting the active log. Existing work-unit records and archived occurrences are preserved. Choose a limited range appropriate to your adoption workflow and inspect the result.
+
+## Browse an offline context snapshot
+
+After initialization, generate one self-contained HTML file without a server, package install, or network connection:
+
+```bash
+bash ctx.sh view
+bash ctx.sh view --open
+bash ctx.sh view --output reports/context-view.html
+bash ctx.sh view --help
+```
+
+The default is `<context>/generated/view.html`. `--open` explicitly uses Python's system-browser launcher after saving; without it, generation only prints the path. `--output` resolves from the project root, permits an absolute path inside the project, and requires `.html`. Its real destination must stay inside the project. For `scripts/`, use `bash scripts/ctx.sh view --open`.
+
+The first screen shows the plan's `Current State` / `현재 상태` and `Next Actions` / `다음 행동` sections, recent work, and generation-time Git observations. Missing sections are identified without inventing a summary. Source labels separate document statements, historical logs, and Git observations. Finding a recorded commit object in this checkout does not prove completion, current branch membership, deployment, or current test success. `pending`, `uncommitted`, and missing references stay unverified.
+
+Warnings are collapsed by default; expanding them displays 50 at a time.
+
+Search titles, summaries, and recorded file names, then filter by type, local calendar date, or an exact file path. Clicking a file applies its original string as the exact filter. Search normalizes Unicode, while exact file paths stay distinct. Date filters use the browser's local date and exclude records without a usable timezone, with an explanation. Results are paged 50 at a time; details include original content and source file/line. Filters and selection are stored in the URL hash for bookmarking.
+
+The document view includes the plan, decisions, backlog, digest, completed tasks, and retired decisions when available. A small safe Markdown subset is supported; raw HTML, images, and unsupported syntax remain text. Recognized document links navigate internally. Safe HTTP(S) links open only when clicked.
+
+Inputs are limited to the allowed context Markdown and active plus `archive/timeline-*.jsonl` records, including legacy archives. Repeated occurrences and raw objects remain intact. Project source files and `generate` collection patterns are not read. The limit is **20 MiB across all inputs including `ctx.config.json`, and 20,000 work records**. Exceeding a limit, invalid UTF-8/JSONL, a non-object row, unsafe input path, or pending archive stops generation and preserves the old HTML. Missing documents/logs are valid empty states. Git absence or query failure is shown while document browsing stays available.
+
+Regenerate after editing sources: browser refresh does not reread Markdown, JSONL, or Git. The timestamp and elapsed-time display describe a saved snapshot and do not detect source changes. Collection uses the shared writer lock with a 30-second wait and may create `work-log/.ctx.lock` and its parent. It does not edit sources, recover archives, add log rows, or change hooks, configuration, or `.gitignore`.
+
+Only a regular single-link file with first-line `<!-- ctx-kit-viewer:1 -->` can be replaced. Final symlinks, other file types, hardlinks, and source/configuration/script collisions are rejected. A parent symlink is allowed only when its real destination stays inside the project. New HTML has owner-only read/write permissions; replacement preserves old permissions. Choose another output name for a user-authored report; there is no `--force`. Detected concurrent changes stop replacement, but output writers are not fully serialized.
+
+Open the reported file and check its generation time, document sections, and record count. Full records may contain private details; no automatic masking is promised. Review sharing and Git tracking explicitly. See [viewer troubleshooting](troubleshooting.md#view-fails-or-the-snapshot-looks-outdated) for recovery.
+
+## Unified search and grounded handoff
+
+Run these commands in an initialized project; use `bash scripts/ctx.sh` for a scripts installation:
+
+```bash
+bash ctx.sh search --query "timeout cache" --scope all --limit 20
+bash ctx.sh search --query "한글.kt" --scope logs --json
+bash ctx.sh handoff
+bash ctx.sh handoff --query "timeout cache" --limit 5 --max-chars 20000 --json
+bash ctx.sh search --help
+bash ctx.sh handoff --help
+```
+
+Search covers the six allowed Markdown bodies/paths and title/summary/files of every active and archived JSONL occurrence. Scope is all (default), documents, or logs. All terms must occur within one document or one record. Per term, a log title scores 4, document/file paths score 2, and body/summary scores 1; a document path does not also score as a title. Ties follow fixed document order, then UTC descending, unknown time last, source path and line. Repeated records stay separate.
+
+Matching applies NFC and ASCII A–Z case folding only. ASCII whitespace splits terms; NBSP, ideographic spaces and U+2028 do not. The raw query limit is 256 Unicode code points and 16 terms before deduplication; limit is 1–50 (default 20). NFC parity for characters introduced after Unicode 11 is not guaranteed between Python 3.7 and newer browsers. Use `--query=--flag` for literal option-like text. Empty queries, duplicate options and unknown arguments fail.
+
+Each source includes the collected file's SHA-256 and a one-based **LF-delimited line range**. Documents use the first matching body line; a path-only match has null lines. Logs use the original JSONL line. snapshotId identifies the input manifest, independent of time, query or output path. Treat refs as opaque identifiers local to that snapshot. Regenerate and check the original/hash after edits; these are neither permanent links nor proof of present state.
+
+Regenerate view to use the **통합 검색 (unified search)** and **인수인계 (handoff)** tabs. Search pages have at most 50 rows and wait for IME composition. Document hits navigate to the preceding heading rather than an exact line scroll. Log hits open existing details and clear timeline filters. Back restores the search and earlier filter state. sq/ss/sp in the URL hash hold query, scope and page.
+
+Handoff quotes explicit, unindented ATX H2 bodies from MASTER_PLAN.md in this order:
+
+| Order | Allowed heading |
+| --- | --- |
+| 1 | `## Constraints` / `## 제약 조건` |
+| 2 | `## Current State` / `## 현재 상태` |
+| 3 | `## Next Actions` / `## 다음 행동` |
+| 4 | `## Verification` / `## 검증` |
+| 5 | `## Unverified` / `## 미검증` |
+
+Review the original and write these sections deliberately; the tool does not rewrite plans/templates. Repeated sections are all preserved. Empty, missing or ambiguous sections are marked missing/ambiguous. Headings in fences, comments, quotes and lists are not promoted. Indented headings, setext or an unclosed comment inside a required block make that block ambiguous and exclude it. This does not automatically extract every natural-language constraint or include entire decision documents.
+
+complete means the five sections are **recorded**, not that their claims were verified. Success logs remain historical reports. grantsAuthority=false: records do not establish current test success, permission to change files, or approval to commit/deploy. Git branch/head/status/change count are separately timestamped observations. Missing does not mean none.
+
+Extra logs default to 5 (limit 0–50), ordered by logs search when query is supplied, otherwise by UTC. Original recordText, large integer digits and repeated occurrences remain intact. The default budget is **12,000 Unicode code points for the entire final output**, including LF, notices, sources and warnings; allowed range is 1,000–100,000. Markdown and JSON count their actual serialized sizes separately. ASCII-escaped JSON can use six characters per Korean character. If mandatory output alone exceeds the budget, exit 1 with empty stdout and a required-size explanation on stderr. Additional records form a whole-record prefix, stopping at the first overflow. Later short records never bypass earlier ones. available = selected + omittedByLimit + omittedByBudget.
+
+JSON preserves original values. Markdown displays CRLF as LF, doubles original backslashes, and visibly escapes controls, bidi and surrogates. displayStats counts CRLF/backslashes/other controls in the selected source fields, not JSON escape characters. Warnings have eight fixed code groups, counts, and up to two 160-character examples per group.
+
+HTML displays the default text from the same Python builder at generation time. A budget overflow affects only that tab, leaving the viewer usable. Clipboard writes happen only after clicking Copy; rejection or an unavailable API selects the text and offers manual ⌘C/Ctrl+C. Use CLI options to change query, limit or budget; HTML does not rebuild the packet.
+
+These CLI commands do not write HTML or sources. Search never queries Git. Both reuse the shared reader's 20 MiB/20,000-record, UTF-8/JSONL, safe-path, pending-journal and lock checks. Locking may create work-log/.ctx.lock and its parent. Corruption, limit and lock errors exit 1 without partial result output. No browser, server or AI call is needed. Review private details before sharing a full HTML snapshot or handoff.
+
+
+Use Git observations only in repositories you trust. The reader does not add an ownership-check bypass; failures appear as unavailable. fsmonitor is disabled, but `git status` may run clean/process filters configured by the repository or globally (for example Git LFS). Side effects of those external filters, including file writes, are not blocked. `search` never invokes Git. Direct source immutability does not guarantee that Git filter programs will never run. See [Git filters](https://git-scm.com/docs/gitattributes#_filter) and [ownership checks](https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory).
+
+Long search-result titles have a preview of at most 160 code points; JSON and details retain the original title. Text-mode search visibly escapes LF/TAB/U+2028/U+2029 in titles/snippets to keep them on one line. A required handoff block affected by an unclosed fence is excluded as ambiguous. Inspect the source for unsupported or ambiguous container syntax, such as list-contained fences. Comment markers inside inline code are not HTML comments. Warning total sums occurrences by code: bidi may belong to two codes, and characters in different selected fields are counted separately.
 
 ## Keep the active context small
 
@@ -149,9 +232,9 @@ bash ctx.sh export --all
 
 Review the output before pasting it into an external service. The default export includes available `MASTER_PLAN.md`, `decisions.md`, `backlog.md`, the warm digest, and a rendered view of the latest 10 active timeline rows. It does not include `AGENT_RULES.md` or generated source bundles.
 
-`--all` additionally includes `archive/completed-tasks.md` and `archive/decisions-deprecated.md`. Despite the broader wording in CLI output, it does **not** include monthly `timeline-*.jsonl` archives. When a historical log is relevant, inspect and share only the selected archive file separately.
+`--all` additionally includes `archive/completed-tasks.md`, `archive/decisions-deprecated.md`, and every `archive/timeline-*.jsonl` file, including legacy records. Timeline files appear in filename order as JSONL blocks with their filenames. Each complete record retains its summary, files, metadata, and repeated occurrences. Review sensitive details and output volume before sharing; default export still omits these monthly details.
 
-Export prints terminal headers and ANSI color escapes; there is no `--plain` option. Redirecting output preserves those bytes. Also verify recent logs separately with `timeline --json`: export suppresses a timeline-rendering failure and can still print “Export complete.”
+Export prints terminal headers and ANSI color escapes; there is no `--plain` option. Redirecting output preserves those bytes. A recent-timeline rendering error or an archived-JSONL read/validation error returns nonzero without printing “Export complete.” Output emitted before an error may be incomplete; discard it, fix the reported source, and retry. Export remains read-only: it creates no writer lock and does not recover a pending archive transaction.
 
 ## Collect reviewed source files for an LLM
 
@@ -211,9 +294,13 @@ If the identity check fails, configure your normal project or global Git identit
 
 Installation initializes an independent Git repository inside the context directory, adds a context ignore rule when needed, enables `git_sync.enabled`, and installs a pre-commit wrapper. It defaults `auto_log` to `true` only when the key is absent; an existing `false` value is preserved. Inspect the reported configuration with `hook status`.
 
+New ignore rules are anchored at the project root and escape pattern characters so the configured directory is matched literally. Names containing `%`, backslashes, `*`, `?`, brackets, `#`, `!`, spaces, Unicode, or apostrophes do not become formatting instructions or broader patterns. Installation verifies the new rule with Git before proceeding. A Git exclusion-check error or a context path containing CR/LF line breaks stops installation before enabling integration. Existing `.gitignore` and `.git/info/exclude` rules are preserved; an already ignored directory needs no new rule. Review broad or malformed rules from older installations manually.
+
 An existing hook is saved as `.git/hooks/pre-commit.ctx-kit-original`, preserving its contents, permissions, and any symlink. The wrapper runs an executable original first with the same working directory, arguments, and input. A nonzero exit blocks the commit and skips ctx-kit; a successful exit allows ctx-kit to run. A non-executable original remains saved and is skipped. Reinstalling an unchanged wrapper is safe; reinstalling an older inline integration migrates the known ctx-kit block while retaining the rest of the hook.
 
 With `git_sync.enabled` and `auto_log` both `true`, a normal project commit attempt can append a log **before** the commit. Its title uses staged file names and its summary contains a staged diff stat. It uses `pending` for both commit fields; it does not later attach the real commit hash or produce a semantic AI summary. A later hook or the commit itself can fail, leaving the pre-commit entry in place. Use the explicit work-unit closure workflow for validation results and outcomes.
+
+These pending entries have `dirty: true`. Staged paths preserve their actual names, and both the file list and diff stat exclude the configured context directory literally, including already tracked context files. A context-only change adds no auto-log. Git metadata query errors stop the hook before adding a row and block the project commit; fix the reported cause before retrying.
 
 The installed hook also snapshots context changes in the independent local Git repository. Context Git commands clear inherited repository-local Git environment variables so they use the context repository's own index; project inspection keeps the commit's active index, including `git commit --only`. ctx-kit contains no remote push step, but local Git and ignore rules are not a secrecy guarantee: already tracked files, separately configured remotes, exports, and generated bundles still require review.
 
@@ -227,6 +314,8 @@ bash ctx.sh hook status
 ```
 
 Uninstall restores the saved original hook exactly, including permissions or a symlink, or removes the wrapper if no original existed. It keeps context history, the ignore rule, and the independent context repository. Installation and removal refuse to overwrite a modified wrapper or conflicting backup, or proceed without a required backup; preserve those files and inspect the reported error before retrying.
+
+Both operations save configuration through [atomic replacement](configuration.md#configuration-writes). A failed configuration write or replacement preserves the existing JSON, but earlier hook, ignore-rule, or context-repository changes are not rolled back. Inspect `ctx.config.json` and `bash ctx.sh hook status` before retrying; after an uninstall failure, the original hook may already have been restored or the wrapper removed.
 
 ## Upgrade an existing installation
 

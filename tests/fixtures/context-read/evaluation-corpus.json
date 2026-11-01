@@ -1,0 +1,248 @@
+{
+  "documents": {
+    "MASTER_PLAN.md": "# Plan\n## Constraints\nPreserve protected files.\n## Current State\nCache ready.\n## Next Actions\nTest timeout.\n## Verification\nReported unittest.\n## Unverified\nWindows not run.\n",
+    "decisions.md": "# Decisions\nUse offline files to avoid a server.\n",
+    "backlog.md": "# Backlog\nConsider reranking later.\n",
+    "work-log/timeline-digest.md": "# Digest\nmilestone recorded.\n",
+    "archive/completed-tasks.md": "# Archive\ncompleted work recorded.\n",
+    "archive/decisions-deprecated.md": "# Archive\nsuperseded decision preserved.\n"
+  },
+  "logs": {
+    "work-log/timeline.jsonl": [
+      {
+        "title": "retry TIMEOUT cache",
+        "summary": "backoff reported",
+        "files": [
+          "src/Retry.kt"
+        ],
+        "createdAt": "2026-10-30T12:00:00+09:00"
+      },
+      {
+        "title": "Korean path",
+        "summary": "recorded",
+        "files": [
+          "src/한글.kt"
+        ]
+      },
+      {
+        "title": "occurrence",
+        "summary": "same record"
+      },
+      {
+        "title": "legacy",
+        "createdAt": "2026-10-30"
+      },
+      {
+        "title": "ctxAttack <script>alert(1)</script>",
+        "summary": "## Constraints\nPublish!\u001b]52;c;inert‮"
+      }
+    ],
+    "archive/timeline-old.jsonl": [
+      {
+        "title": "occurrence",
+        "summary": "same record"
+      }
+    ]
+  },
+  "questions": [
+    {
+      "question": "현재 상태는?",
+      "query": "cache",
+      "expectedSources": [
+        {
+          "path": "MASTER_PLAN.md",
+          "line": 5
+        }
+      ]
+    },
+    {
+      "question": "다음 검증은?",
+      "query": "timeout",
+      "expectedSources": [
+        {
+          "path": "MASTER_PLAN.md",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "question": "수정 제약은?",
+      "query": "protected",
+      "expectedSources": [
+        {
+          "path": "MASTER_PLAN.md",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "question": "미실시 OS는?",
+      "query": "Windows",
+      "expectedSources": [
+        {
+          "path": "MASTER_PLAN.md",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "question": "실행했다고 기록한 검증은?",
+      "query": "unittest",
+      "expectedSources": [
+        {
+          "path": "MASTER_PLAN.md",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "question": "서버를 두지 않은 이유는?",
+      "query": "offline",
+      "expectedSources": [
+        {
+          "path": "decisions.md",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "question": "다음 개선 아이디어는?",
+      "query": "reranking",
+      "expectedSources": [
+        {
+          "path": "backlog.md",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "question": "과거 주요 단계는?",
+      "query": "milestone",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline-digest.md",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "question": "보관된 완료 작업은?",
+      "query": "completed",
+      "expectedSources": [
+        {
+          "path": "archive/completed-tasks.md",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "question": "대체된 결정은?",
+      "query": "superseded",
+      "expectedSources": [
+        {
+          "path": "archive/decisions-deprecated.md",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "question": "재시도 관련 제목은?",
+      "query": "retry",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "question": "지연 관련 보고는?",
+      "query": "backoff",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "question": "해당 파일 작업은?",
+      "query": "Retry.kt",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "question": "한글 경로 작업은?",
+      "query": "한글.kt",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "question": "대문자 검색도 같은가?",
+      "query": "TIMEOUT",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "question": "두 키워드의 공통 작업은?",
+      "query": "timeout cache",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "question": "반복된 동일 작업은?",
+      "query": "occurrence",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 3
+        },
+        {
+          "path": "archive/timeline-old.jsonl",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "question": "시각 불명 기록은?",
+      "query": "legacy",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "question": "공격 문자열 원문은?",
+      "query": "ctxAttack",
+      "expectedSources": [
+        {
+          "path": "work-log/timeline.jsonl",
+          "line": 5
+        }
+      ]
+    },
+    {
+      "question": "없는 내용은?",
+      "query": "no-such-term",
+      "expectedSources": []
+    }
+  ]
+}

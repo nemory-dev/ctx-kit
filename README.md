@@ -36,6 +36,16 @@ bash ctx.sh timeline --limit 1 --json
 
 The entry contains that summary and those file paths. Edit the generated project-name, stack, current-state, and next-action placeholders before using the context with an agent.
 
+Browse the plan, documents, and active plus archived work records in one offline HTML file:
+
+```bash
+bash ctx.sh view --open
+```
+
+The default output is `<context>/generated/view.html`. Run the command again after source changes: browser refresh only reloads the saved snapshot. The HTML includes full records; review private details before sharing. See the [viewer workflow](docs/en/workflows.md#browse-an-offline-context-snapshot).
+
+Use `bash ctx.sh search --query "timeout cache"` to find documents and records together, or `bash ctx.sh handoff` to quote evidence for resuming work. Both are also available as HTML tabs. See [search and handoff](docs/en/workflows.md#unified-search-and-grounded-handoff).
+
 ## How the context fits together
 
 ```text
@@ -62,7 +72,7 @@ The rules ask agents to read current context at session start, update affected c
 
 - **Existing rules are preserved.** `init`/`sync` report conflicts with ordinary files or unrelated links. They do not merge instructions for you. See [conflict recovery](docs/en/troubleshooting.md).
 - **Storage is local, but privacy needs configuration.** `--no-hook` also skips automatic Git exclusion. Hook installation adds or recognizes a context exclusion, but already tracked files remain tracked. Check [local Git exclusions](docs/en/getting-started.md#local-git-exclusions) before committing; generated links can otherwise point teammates at a missing private directory.
-- **Review text before sharing.** `generate` does not apply `.gitignore` or scan for secrets. `export --all` adds archived task/decision Markdown, not monthly log files. There is no fixed token-saving guarantee. See [export and collection](docs/en/workflows.md).
+- **Review text before sharing.** `generate` does not apply `.gitignore` or scan for secrets. `export --all` adds archived task/decision Markdown and complete monthly timeline JSONL records; review private details and output volume. There is no fixed token-saving guarantee. See [export and collection](docs/en/workflows.md).
 
 Work-log writes use a shared lock and atomic file replacement. Archive records pending writes in a recovery journal before removing source content. Interrupted operations recover before the next context write; unexpected external edits cause an error instead of being overwritten. [Recovery details](docs/en/troubleshooting.md) explain how to preserve and inspect affected files.
 
@@ -79,6 +89,9 @@ Run commands from the project root. If installed under `scripts/`, use `bash scr
 | `bash ctx.sh enable Cursor` / `disable Cursor` | Change an agent setting and run sync |
 | `bash ctx.sh log --summary "..."` | Record a work unit; `record` is an alias |
 | `bash ctx.sh timeline --limit 20` | Read active timeline entries |
+| `bash ctx.sh view --open` | Generate an offline context snapshot and open it in a browser |
+| `bash ctx.sh search --query "timeout cache"` | Search documents and active/archived work records |
+| `bash ctx.sh handoff --limit 5` | Quote handoff evidence with missing sections and historical reports labeled |
 | `bash ctx.sh backfill --limit 30` | Import recent Git commits into the active timeline |
 | `bash ctx.sh archive --keep 30` | Archive completed tasks, retired decisions, and older logs |
 | `bash ctx.sh export` | Print selected context for review and manual sharing |

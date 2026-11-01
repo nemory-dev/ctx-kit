@@ -139,6 +139,12 @@ Keep the `AGENT_RULES.md` basename: `init` creates that filename inside the dire
 
 Changing `source` does not move context files, migrate existing links, or rewrite any `generate.<type>.output`. Existing links to an old source can become conflicts under the new configuration. Back up and reconcile the existing installation before changing this field; see [Troubleshooting](troubleshooting.md).
 
+## Configuration writes
+
+`enable`, `disable`, `hook install`, and `hook uninstall` save an existing regular `ctx.config.json` by writing the complete JSON to a temporary file in the same directory, flushing and syncing it, then atomically replacing the configuration. Existing file permissions are retained. A temporary write or replacement failure exits nonzero, leaves the existing configuration unchanged, and cleans up the temporary file. A symlink or other non-regular configuration entry is rejected without changing that entry or its target.
+
+This protects the configuration file during replacement; it does not roll back the whole command. A later `sync` failure can leave an agent flag already saved, and a failed hook operation can leave earlier hook, ignore-rule, or context-repository changes in place. Concurrent configuration edits are not locked. See [Troubleshooting](troubleshooting.md#configuration-save-fails) before retrying a failed save.
+
 ## Agent registration and link behavior
 
 Add a row to `agent_rules`, then run `sync`. Use a distinct label; the destination must be a file path the intended tool actually reads. The CLI does not discover agent installations.
@@ -161,6 +167,10 @@ bash ctx.sh status
 - If multiple rows use the same path, the link stays while at least one row is enabled. With the defaults, disabling Codex alone keeps `AGENTS.md` for Antigravity.
 - When every row for a path is disabled, it removes a symlink resolving to the current source, except a link needed in the source's or an enabled rule link's resolution chain. It preserves disabled regular files and unrelated or broken unmanaged links.
 - After conflict checks pass, it updates the `> Last Updated:` line in the context's `MASTER_PLAN.md`, when that file and line exist.
+
+The date update writes to a unique temporary file in the context directory, then atomically replaces the regular `MASTER_PLAN.md`, preserving its permissions. Existing `MASTER_PLAN.md.bak` files, symlinks, and directories are left untouched. A write or replacement failure returns a nonzero status before changing agent links, preserves the existing plan and backups, and removes only this update's temporary file. A symlinked plan, including a broken link, is refused without changing the link or its target.
+
+If this update fails, check the reported path, available space, and the context directory's write permissions, then retry `bash ctx.sh sync`. For a symlinked plan, preserve the link and target while deciding how to provide a regular `MASTER_PLAN.md`.
 
 There is no `force`, `import`, or `doctor` command. Resolve conflicts by reviewing and backing up existing instructions, then choosing a non-conflicting target or intentionally reconciling the files. Follow [Troubleshooting](troubleshooting.md) for concrete steps.
 

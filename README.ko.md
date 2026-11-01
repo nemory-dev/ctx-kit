@@ -36,6 +36,16 @@ bash ctx.sh timeline --limit 1 --json
 
 반환된 항목에서 같은 요약과 파일 경로를 확인할 수 있습니다. 에이전트와 사용하기 전에 생성된 파일의 프로젝트명, 기술 스택, 현재 상태, 다음 행동을 실제 내용으로 바꾸세요.
 
+계획, 문서, 활성·보관 작업 기록을 오프라인 HTML 하나로 열람합니다.
+
+```bash
+bash ctx.sh view --open
+```
+
+기본 출력은 `<context>/generated/view.html`입니다. 원본 변경 후 명령을 다시 실행하세요. 브라우저 새로고침은 저장된 스냅샷만 다시 읽습니다. HTML에는 전체 기록이 포함되므로 공유 전 비공개 내용을 검토하세요. [뷰어 사용 흐름](docs/ko/workflows.md#오프라인-컨텍스트-스냅샷-열람하기)을 참고하세요.
+
+문서와 기록을 함께 찾으려면 `bash ctx.sh search --query "timeout cache"`, 근거를 붙여 인계하려면 `bash ctx.sh handoff`를 실행하세요. HTML에도 두 탭이 있습니다. [검색·인수인계 사용법](docs/ko/workflows.md#통합-검색과-근거-있는-인수인계)을 참고하세요.
+
 ## 컨텍스트 구성
 
 ```text
@@ -62,7 +72,7 @@ project/
 
 - **기존 규칙을 보존합니다.** `init`/`sync`는 일반 파일이나 관련 없는 링크와 충돌하면 오류를 알립니다. 기존 지침을 자동으로 병합하지는 않습니다. [충돌 해결](docs/ko/troubleshooting.md)을 참고하세요.
 - **로컬 저장과 비공개 설정은 구분해야 합니다.** `--no-hook`은 자동 Git 제외 설정도 건너뜁니다. 훅 설치는 컨텍스트 제외 규칙을 추가하거나 기존 규칙을 인식하지만, 이미 추적 중인 파일은 계속 추적됩니다. 커밋 전에 [로컬 Git 제외](docs/ko/getting-started.md#local-git-exclusions)를 확인하세요. 생성된 링크가 공유되면 팀원에게 없는 개인 디렉터리를 가리킬 수도 있습니다.
-- **공유 전 결과를 검토하세요.** `generate`는 `.gitignore`를 적용하거나 비밀정보를 검사하지 않습니다. `export --all`은 보관된 작업·결정 Markdown을 추가하며 월별 로그 파일은 포함하지 않습니다. 고정된 토큰 절감률을 보장하지 않습니다. [내보내기와 수집](docs/ko/workflows.md)을 참고하세요.
+- **공유 전 결과를 검토하세요.** `generate`는 `.gitignore`를 적용하거나 비밀정보를 검사하지 않습니다. `export --all`은 보관된 작업·결정 Markdown과 월별 타임라인 JSONL의 전체 레코드를 추가하므로 비공개 상세와 출력 분량을 확인하세요. 고정된 토큰 절감률을 보장하지 않습니다. [내보내기와 수집](docs/ko/workflows.md)을 참고하세요.
 
 작업 로그는 공통 잠금과 파일의 원자적 교체를 사용합니다. archive는 원본 내용을 제거하기 전에 복구 파일에 저장 계획을 기록합니다. 중단된 작업은 다음 컨텍스트 쓰기 전에 복구하고, 예상하지 못한 외부 수정이 있으면 덮어쓰는 대신 오류를 알립니다. [복구 안내](docs/ko/troubleshooting.md)에서 파일 보존과 확인 절차를 설명합니다.
 
@@ -79,6 +89,9 @@ project/
 | `bash ctx.sh enable Cursor` / `disable Cursor` | 에이전트 활성화 설정 변경 후 sync 실행 |
 | `bash ctx.sh log --summary "..."` | 작업 단위 기록. `record`도 같은 명령 |
 | `bash ctx.sh timeline --limit 20` | 현재 타임라인 조회 |
+| `bash ctx.sh view --open` | 오프라인 컨텍스트 스냅샷 생성 후 브라우저 열기 |
+| `bash ctx.sh search --query "timeout cache"` | 문서·활성/보관 기록 통합 키워드 검색 |
+| `bash ctx.sh handoff --limit 5` | 출처·누락·당시 보고를 구분한 인수인계 출력 |
 | `bash ctx.sh backfill --limit 30` | 최근 Git 커밋을 현재 타임라인으로 가져오기 |
 | `bash ctx.sh archive --keep 30` | 완료 작업, 폐기된 결정, 오래된 로그 보관 |
 | `bash ctx.sh export` | 검토 후 수동 공유할 컨텍스트 출력 |

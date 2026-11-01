@@ -1,5 +1,6 @@
 """Real-CLI regressions for archival and historical work-log persistence."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -366,6 +367,213 @@ class StorageTests(unittest.TestCase):
         result = self.run_ctx("backfill", "--all")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.timeline.read_bytes(), before)
+
+    def test_backfill_after_archive_does_not_reimport_archived_commits(self):
+        self.initialize_git()
+        self.assertEqual(self.run_ctx("backfill", "--all").returncode, 0)
+        original = self.read_entries(self.timeline)
+        result = self.run_ctx("archive", "--keep", "0", "--no-tasks", "--no-decisions")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        archived = {path: path.read_bytes() for path in self.archive.glob("timeline-*.jsonl")}
+
+        for args in (("backfill", "--all"), ("backfill", "--limit", "30")):
+            with self.subTest(args=args):
+                result = self.run_ctx(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.read_entries(self.timeline), [])
+                for path, content in archived.items():
+                    self.assertEqual(path.read_bytes(), content)
+
+        (self.project / "source.txt").write_text("New work\n", encoding="utf-8")
+        self.git("add", "source.txt")
+        self.git("commit", "-q", "-m", "New work")
+        result = self.run_ctx("backfill", "--all")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        active = self.read_entries(self.timeline)
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["fullCommit"], self.git("rev-parse", "HEAD"))
+        self.assertNotEqual(active[0]["fullCommit"], original[0]["fullCommit"])
+
+    def test_backfill_checks_full_and_legacy_short_commits_in_all_archive_files(self):
+        self.initialize_git()
+        first = self.git("rev-parse", "HEAD")
+        (self.project / "source.txt").write_text("Second work\n", encoding="utf-8")
+        self.git("add", "source.txt")
+        self.git("commit", "-q", "-m", "Second work")
+        second = self.git("rev-parse", "--short", "HEAD")
+        full = self.entry("Archived full commit")
+        full["fullCommit"] = first
+        short = self.entry("Archived short commit")
+        short["commit"] = second
+        self.write_entries(self.archive / "timeline-2024-01.jsonl", [full])
+        self.write_entries(self.archive / "timeline-legacy.jsonl", [short, short])
+        current = self.entry("Uncommitted current work")
+        self.write_entries(self.timeline, [current])
+        before = self.source_snapshot()
+
+        result = self.run_ctx("backfill", "--all")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_sources_unchanged(before)
+        self.assertEqual(self.read_entries(self.timeline), [current])
+        self.assertEqual(self.read_entries(self.archive / "timeline-legacy.jsonl"), [short, short])
+
+    def test_backfill_resolves_legacy_hashes_when_git_abbreviation_length_changes(self):
+        self.initialize_git()
+        full = self.git("rev-parse", "HEAD")
+        archived = self.archive / "timeline-legacy.jsonl"
+        for old_length, current_length in ((7, 12), (12, 7)):
+            with self.subTest(old_length=old_length, current_length=current_length):
+                entry = self.entry("Legacy archived commit")
+                entry["commit"] = full[:old_length]
+                self.write_entries(archived, [entry])
+                self.write_entries(self.timeline, [self.entry("Keep current work")])
+                self.git("config", "core.abbrev", str(current_length))
+                before = self.timeline.read_bytes()
+
+                result = self.run_ctx("backfill", "--all")
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.timeline.read_bytes(), before)
+                self.assertEqual(self.read_entries(archived), [entry])
+
+    def test_backfill_rejects_ambiguous_legacy_commit_without_rewriting_history(self):
+        self.initialize_git()
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        digest = hashlib.sha256 if len(self.git("rev-parse", "HEAD")) == 64 else hashlib.sha1
+        seen = {}
+        for index in range(65537):
+            content = (
+                f"tree {tree}\nauthor Storage Test <storage@example.invalid> 1700000000 +0000\n"
+                f"committer Storage Test <storage@example.invalid> 1700000000 +0000\n\nCollision {index}\n"
+            ).encode("utf-8")
+            prefix = digest(b"commit " + str(len(content)).encode("ascii") + b"\0" + content).hexdigest()[:4]
+            if prefix in seen:
+                previous = seen[prefix]
+                break
+            seen[prefix] = content
+        for payload in (previous, content):
+            result = subprocess.run(
+                ["git", "hash-object", "-t", "commit", "-w", "--stdin"], input=payload,
+                cwd=self.project, env=self.env, capture_output=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+        entry = self.entry("Ambiguous legacy commit")
+        entry["commit"] = prefix
+        archived = self.archive / "timeline-legacy.jsonl"
+        self.write_entries(archived, [entry])
+        self.write_entries(self.timeline, [self.entry("Keep current work")])
+        before = self.timeline.read_bytes()
+
+        result = self.run_ctx("backfill", "--all")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Ambiguous", result.stderr)
+        self.assertEqual(self.timeline.read_bytes(), before)
+        self.assertEqual(self.read_entries(archived), [entry])
+
+    def test_backfill_rejects_invalid_monthly_archives_before_rewriting_active_log(self):
+        self.initialize_git()
+        self.write_entries(self.timeline, [self.entry("Keep active work")])
+        self.write_entries(self.archive / "timeline-2024-01.jsonl", [self.entry("Keep archived work")])
+        broken = self.archive / "timeline-2024-02.jsonl"
+        for content in ("{broken\n", "null\n", "[]\n"):
+            with self.subTest(content=content):
+                broken.write_text(content, encoding="utf-8")
+                before = self.source_snapshot()
+
+                result = self.run_ctx("backfill", "--all")
+
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(broken.name, result.stderr)
+                self.assertIn("line 1", result.stderr)
+                self.assert_sources_unchanged(before)
+                self.assertEqual(broken.read_text(encoding="utf-8"), content)
+                self.assertEqual(list(self.context.rglob(".ctx-write-*")), [])
+
+    def test_backfill_recovers_archive_then_checks_recovered_history(self):
+        self.initialize_git()
+        self.assertEqual(self.run_ctx("backfill", "--all").returncode, 0)
+        original = self.read_entries(self.timeline)
+        self.fail_replacement_of(self.timeline)
+        result = self.run_ctx("archive", "--keep", "0", "--no-tasks", "--no-decisions")
+        self.assert_failed(result)
+        del self.env["CTX_TEST_FAIL_REPLACE"]
+
+        result = self.run_ctx("backfill", "--all")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Recovered interrupted archive", result.stderr)
+        self.assertEqual(self.read_entries(self.timeline), [])
+        records = [entry for path in self.archive.glob("timeline-*.jsonl")
+                   for entry in self.read_entries(path)]
+        self.assertEqual(records, original)
+        self.assertFalse((self.logs / ".ctx-archive-transaction.json").exists())
+
+    def test_export_all_includes_complete_monthly_and_legacy_records_in_order(self):
+        january = self.entry("January work", month="2024-01")
+        january.update(summary="Full archived summary\nSecond detail line", files=["src/한글 file.py"],
+                       validation={"result": "passed", "count": 3})
+        february = self.entry("February work", month="2024-02")
+        legacy = self.entry("Legacy work")
+        self.write_entries(self.archive / "timeline-2024-02.jsonl", [february])
+        self.write_entries(self.archive / "timeline-2024-01.jsonl", [january, january])
+        self.write_entries(self.archive / "timeline-legacy.jsonl", [legacy])
+
+        default = self.run_ctx("export")
+        result = self.run_ctx("export", "--all")
+
+        self.assertEqual(default.returncode, 0, default.stdout + default.stderr)
+        self.assertNotIn("Full archived summary", default.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        exported = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+        self.assertEqual(exported, [january, january, february, legacy])
+        for name in ("timeline-2024-01.jsonl", "timeline-2024-02.jsonl", "timeline-legacy.jsonl"):
+            self.assertIn(name, result.stdout)
+        self.assertFalse((self.logs / ".ctx.lock").exists())
+
+    def test_export_all_rejects_invalid_monthly_record_without_success_or_mutation(self):
+        broken = self.archive / "timeline-2024-01.jsonl"
+        broken.parent.mkdir()
+        for content in ("{broken\n", "null\n"):
+            with self.subTest(content=content):
+                broken.write_text(content, encoding="utf-8")
+                before = self.source_snapshot()
+
+                result = self.run_ctx("export", "--all")
+
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(broken.name, result.stderr)
+                self.assertIn("line 1", result.stderr)
+                self.assertNotIn("Export complete.", result.stdout)
+                self.assert_sources_unchanged(before)
+                self.assertEqual(broken.read_text(encoding="utf-8"), content)
+                self.assertFalse((self.logs / ".ctx.lock").exists())
+
+    def test_export_reports_active_timeline_failure_instead_of_success(self):
+        self.timeline.write_text("{broken\n", encoding="utf-8")
+        before = self.timeline.read_bytes()
+
+        result = self.run_ctx("export", "--all")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(result.stderr.strip())
+        self.assertNotIn("Export complete.", result.stdout)
+        self.assertEqual(self.timeline.read_bytes(), before)
+
+    def test_export_all_does_not_recover_pending_archive_or_create_storage_files(self):
+        self.write_entries(self.archive / "timeline-2024-01.jsonl", [self.entry("Archived work")])
+        journal = self.logs / ".ctx-archive-transaction.json"
+        journal.write_text("{not a valid recovery journal\n", encoding="utf-8")
+        before = {path: path.read_bytes() for path in self.context.rglob("*") if path.is_file()}
+
+        result = self.run_ctx("export", "--all")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("Recovered interrupted archive", result.stderr)
+        after = {path: path.read_bytes() for path in self.context.rglob("*") if path.is_file()}
+        self.assertEqual(after, before)
+        self.assertFalse((self.logs / ".ctx.lock").exists())
 
 
 if __name__ == "__main__":

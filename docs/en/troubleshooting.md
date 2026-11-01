@@ -43,6 +43,14 @@ For an installed Python outside `PATH`, add its executable's directory in the sh
 
 The standalone Python examples below use `python3`; substitute your passing `python` or `py -3` command if needed. The regression suite is verified on macOS with Bash 3.2 and Python 3.11.8; actual Windows execution has not been verified here. CI runs with Python 3.11 on Linux and macOS. The Python 3.7 baseline is not a claim that the suite was run on every later version.
 
+## CLI input errors
+
+An unknown command returns a nonzero status and prints help. Unknown options for `init`, `export`, and `log` (including `record`) also fail; an option typo is not recorded as work-log text. Positional log summaries still work. For summary text starting with a hyphen, use `bash ctx.sh log --summary "--literal summary"`.
+
+An unregistered name in `enable` or `disable` reports the available agents and fails without rewriting configuration or running `sync`. Inspect names with `bash ctx.sh list`. `timeline --limit` and `backfill --limit` require a non-negative integer, even when there are no logs or Git commits; `0` is allowed.
+
+`list`, `status`, and `sync` propagate agent-list read errors, including malformed JSON or missing row fields, instead of displaying success after a Python failure. Fix the reported configuration error before retrying. This is not full configuration-schema validation. An empty `agent_rules` array is valid. `status` still reports missing source files or links as informational output; use the explicit link checks below to verify those paths.
+
 ## Missing or malformed configuration
 
 `Error: ctx.config.json not found.` refers to the project root selected by the script location. A script in an arbitrary tools directory will look for configuration there. Move the standalone CLI to the supported root or `scripts/` location before creating another configuration by mistake.
@@ -58,6 +66,20 @@ python3 -m json.tool ctx.config.json >/dev/null
 `init` derives the context directory from `source`, but creates the rules template with the fixed basename `AGENT_RULES.md`. A custom directory such as `.ctx-local/AGENT_RULES.md` works; setting `source` to `.ctx-local/team-rules.md` does not make `init` create that filename. Either use the supported basename or deliberately prepare your existing source before `sync`.
 
 Project and interpreter paths, configured context and agent paths, and collected filenames support spaces, Unicode, and apostrophes. Quote shell paths with double quotes, for example `bash "/path/to/team's project/ctx.sh" status`. In JSON, use ordinary double-quoted strings, such as `"source": "team's context/AGENT_RULES.md"`; an apostrophe needs no JSON escape. Check quoting and the actual configured paths when diagnosing a missing file. If an older copied CLI still reports a Python syntax error for such a path, update `ctx.sh` and use documentation from the same revision.
+
+## Configuration save fails
+
+`enable`, `disable`, `hook install`, and `hook uninstall` replace a regular `ctx.config.json` only after completing a temporary JSON write in its directory. A failure before replacement exits nonzero, preserves the existing configuration and its permissions, and cleans up this run's temporary file. `Refusing to replace non-regular configuration file` rejects a configuration symlink or other non-regular entry without changing it or its target. Keep the entry and a backup while deciding how to provide a regular configuration file at the project root.
+
+For a write or replacement error, check the reported path, available storage, and the project directory's write permissions; replacement needs directory write access. Do not make the project world-writable. After correcting the cause, validate the preserved configuration and inspect the operation's current state:
+
+```bash
+python3 -m json.tool ctx.config.json >/dev/null
+bash ctx.sh list
+bash ctx.sh hook status
+```
+
+Use only the checks relevant to the failed operation. Configuration replacement does not roll back other changes: `enable`/`disable` may save a flag before a later `sync` failure; hook installation may already change the ignore rule or initialize context Git, and removal may already restore the original hook or remove the wrapper. Review those paths before retrying. Finish or stop other configuration writers first; configuration edits are not locked.
 
 ## Rules conflict, are missing, or point to the wrong source
 
@@ -152,6 +174,8 @@ Tracked agent symlinks and ignored context are separate decisions: a symlink sto
 
 ## Invalid JSONL, permission errors, or a failed log
 
+`Git rev-parse failed`, `Git branch failed`, `Git status failed`, `Git show failed`, `Git log failed`, or `Git diff failed` means a metadata query failed. The command exits nonzero before adding a row or rewriting the active log, rather than treating the failure as a clean project or an empty file list. A broken `.git` directory or file is an error; standalone logging is reserved for projects without a repository or Git executable. Inspect the accompanying Git error and repository/index permissions, then check the existing timeline before retrying. A Git query error in the installed auto-log hook also blocks the outer project commit.
+
 Writers reject malformed JSONL with a filename and line number, for example `invalid JSON at line 2` or `expected a JSON object at line 1`. Each nonblank line must be a JSON object. `null`, arrays, and strings are invalid records. Blank lines are ignored; a valid last record without a trailing newline is supported.
 
 Stop writers, back up the context, and inspect the indicated line in a local editor. Restore a known valid record or make a reviewed correction from original evidence. Do not silently drop invalid rows, invent replacement history, or truncate the file. `archive` also validates existing monthly archives; the problem may be in `archive/timeline-YYYY-MM.jsonl` rather than the hot log.
@@ -186,7 +210,7 @@ PY
 bash ctx.sh timeline --limit 20 --json
 ```
 
-Object syntax is not a full validation of every record field. `timeline` may report a traceback for malformed data; run it directly because `export` suppresses its errors.
+Object syntax is not a full validation of every record field. `timeline` may report a traceback for malformed data; `export` propagates that failure. Run `timeline --json` directly to diagnose the active log.
 
 `Refusing to replace non-regular file`, `Permission denied`, or an I/O error requires inspecting the exact path, permissions, and available storage. A directory or symlink at a log/destination path is intentionally not replaced by the atomic writer. Preserve it and resolve the file-type conflict deliberately. Do not make the entire project world-writable.
 
@@ -257,8 +281,8 @@ For a conflict, reconcile the backup, the external edit, and the pending transac
 | An input read, output write, or replacement fails | A permission or I/O error prevents replacement. This run leaves the output untouched and removes its temporary file. | Inspect the reported input/output path, output directory permissions, and available storage; correct the cause and rerun. A replacement needs write access to the output directory. Do not make the project world-writable. |
 | `Output changed during generation; preserving it` | The output changed between the initial check and the check before replacement, so this run stops without replacing it. Concurrent writers are not locked. | Inspect and preserve the current output, finish or stop the other writer, then rerun the command. |
 | Generated output contains unexpected data | Collection uses filesystem globbing and concatenates matching files. It does not honor Git ignore rules or exclude binary/private files; only the output and its aliases are automatically excluded. | Prefer an explicit, reviewed `collect` list. Inspect collected paths and the result locally, and exclude credentials, private context, large files, and binary files before sharing. |
-| `export --all` omits archived timeline records | `--all` adds archived completed tasks and deprecated decisions, but does not include monthly `archive/timeline-*.jsonl` files. | Inspect those files separately when you need full history. `timeline` also reads only the hot log. |
-| Export reports success but recent work is missing | Export suppresses `timeline` errors and can exit 0 even when that section failed. | Run `bash ctx.sh timeline --limit 20 --json` directly and use the JSONL diagnostic above before trusting the export. |
+| `export --all` fails while reading archived timelines | A monthly or legacy `archive/timeline-*.jsonl` file is unreadable, contains invalid JSON, or has a non-object row. | Preserve the source and inspect the reported file and line using the JSONL diagnostic above. Discard partial output, repair the source from evidence, and retry. |
+| Export stops while rendering recent work | An active-timeline read or rendering failure is propagated with a nonzero exit status. | Run `bash ctx.sh timeline --limit 20 --json` directly and use the JSONL diagnostic above. Fix the data and retry; “Export complete.” is printed only after successful output. |
 
 From the project root, inspect the configured `project` output without following a final symlink:
 
@@ -284,6 +308,29 @@ The first character is `-` for a regular file, `l` for a symlink, `d` for a dire
 
 Do not treat generated or exported output as a secret-filtered bundle. Review it before pasting into an external LLM.
 
+## `view` fails or the snapshot looks outdated
+
+`view` does not repair or discard source records. A failure before replacement preserves the previous HTML; an old file after failure is not a newly generated snapshot. Start with `bash ctx.sh view --help` and the exact reported path.
+
+| Symptom | Cause and next step |
+| --- | --- |
+| Missing configuration/context | Initialize deliberately with the [existing-project safeguards](getting-started.md#existing-projects). `view` does not run `init` or `sync`. |
+| Pending archive transaction | Preserve the journal and context, then follow [archive recovery](#interrupted-archive-and-recovery-journal). `view` checks under the shared lock but does not recover, delete, or edit the journal. |
+| Invalid JSON, non-object row, or UTF-8 error | Back up and inspect the reported file/line using the [JSONL diagnostic](#invalid-jsonl-permission-errors-or-a-failed-log). Restore from evidence; do not discard a damaged last row to pass generation. |
+| Input limit exceeded | The limit is 20 MiB across all inputs including `ctx.config.json`, and 20,000 active plus archived work records. `archive` moves rows but does not reduce the viewer's total. Preserve the history; this version has no truncation or partial-history option. |
+| Unsafe input/context path | Keep the context's real root inside the project. Input files and their subdirectories must not be symlinks, and inputs must be regular files. Preserve and inspect the reported entry before choosing a safe layout. |
+| Writer lock timeout | Another operation held the lock for 30 seconds. Follow the [lock procedure](#writer-lock-timeout); do not delete `.ctx.lock`. Its existence does not establish that it is held. |
+| Output replacement refused | Preserve the file and choose an unused name with `bash ctx.sh view --output reports/context-view.html`. Only a regular single-link file with first-line `<!-- ctx-kit-viewer:1 -->` is replaceable. Do not add the marker to an unrelated file to bypass the check. |
+| Outside-project output or unsafe alias | Use `.html` whose real destination stays inside the project. Final symlinks, other file types, hardlinks, and input/configuration/script collisions are rejected. Parent symlinks may resolve only inside the project. |
+| Output changed during generation | Another process changed the destination or its parents. Preserve that version, finish or stop the other writer, and regenerate. There is no `--force`. |
+| Temporary write, fsync, or replacement failure | Inspect the output directory's permissions and storage. Old output remains intact and this run's temporary file is removed. Do not make the project world-writable. |
+| “Viewer saved … but directory sync failed” | Replacement succeeded but directory durability could not be confirmed. New HTML may exist despite exit 1. Inspect its generation time and fix the filesystem issue before retrying. |
+| Browser launch failed | HTML remains at the reported path. Open it manually or check the OS default browser/Python `BROWSER` setting. Omit `--open` to generate only. A requested launch failure returns exit 1. |
+| Browser shows old state | Rerun `bash ctx.sh view`, then open/refresh that generated file. Refresh alone does not collect source changes. Check the generation time and output path. |
+| Git information unavailable | Read the displayed reason and check Git/repository permissions. An unavailable query does not mean a clean working tree. Documents and history remain usable. |
+
+Generation does not add `.gitignore` rules. Review the full HTML for private data and check tracking policy before sharing or staging. External resources are blocked during viewing; supported HTTP(S) links open only after an explicit click.
+
 ## Windows wrapper or symlink failures
 
 Copy `ctx.cmd` **beside** `ctx.sh`. Use `ctx.cmd` in Command Prompt, `./ctx.cmd` or `.\ctx.cmd` in PowerShell, or `bash ctx.sh` in Git Bash. For a `scripts/` installation, keep both files there and invoke `.\scripts\ctx.cmd` from PowerShell; configuration remains at the parent project root.
@@ -291,3 +338,20 @@ Copy `ctx.cmd` **beside** `ctx.sh`. Use `ctx.cmd` in Command Prompt, `./ctx.cmd`
 `[Error] Git Bash is required to run ctx on Windows.` means the wrapper did not find Git Bash in its checked locations. Git Bash and a suitable Python executable must be available to the wrapper's shell, not just to a different terminal. In Git Bash, run the Python diagnostics above: the CLI checks `python3`, `python`, then `py -3`, and only accepts a candidate that runs Python 3.7+. Configure `PATH` for your installation; the CLI does not search private runtime locations.
 
 Symlink creation also requires Windows support and sufficient privileges, commonly provided through Developer Mode or an appropriately authorized shell. If `ln -s` fails, check that environment before retrying. Git may check out symlinks as ordinary text files when symlink support is disabled; inspect the actual file type and content before running `sync`, which preserves a conflicting regular file. These are compatibility requirements; an actual Windows end-to-end run has not been verified here.
+
+## Search and handoff errors or incomplete output
+
+| Symptom | Check and next step |
+| --- | --- |
+| Invalid search arguments | Run `bash ctx.sh search --help` alone. Query is required (256 code points/16 terms), scope is all/documents/logs, limit is 1–50, and options cannot repeat. Use `--query=--flag` for option-like text. |
+| Zero results | All terms must occur in one document or record. Words in different records are not combined. Only ASCII case is folded, not all Unicode case. |
+| Required section missing/ambiguous | Inspect the allowed H2 headings and original MASTER_PLAN.md, then record the content deliberately. Fences, comments, indentation and setext may obscure boundaries. Missing does not mean none or test success. |
+| Budget exceeded | Check the minimum size on stderr. Try `bash ctx.sh handoff --limit 0 --max-chars 20000` for mandatory content only (maximum 100000). Required source text is never cut. ASCII-escaped JSON may need a larger budget. HTML budget failure leaves other tabs usable. |
+| Some records omitted | Distinguish omittedByLimit from omittedByBudget in selection. Adjust limit/max-chars and inspect sources. An oversized earlier record is never skipped to include later short ones. |
+| Clipboard rejected/unavailable | Use ⌘C or Ctrl+C on the selected text. A browser may deny clipboard access on file://. No server or permission changes are needed. |
+| Source differs from the current file | This is a saved snapshot. Rerun view/search/handoff and compare snapshotId and source hash. |
+| Corruption, pending journal, lock or input limit | Follow the viewer/archive recovery procedures above. New commands neither recover automatically nor discard records; input failures exit 1 with empty stdout. |
+
+Read commands also require permission to create/wait on the shared .ctx.lock. Git unavailable does not mean clean. A complete handoff means the required sections are recorded, not current verification success or user approval.
+
+For ownership errors, inspect repository ownership and trust. The reader does not add safe.directory=*. Git observation may run configured clean/process filters. When external-filter side effects are unacceptable, use search to inspect documents/logs without invoking Git.

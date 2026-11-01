@@ -1,0 +1,106 @@
+{
+  "records": [
+    {
+      "title": "TIMEOUT cache",
+      "summary": "backoff retry",
+      "files": [
+        "src/한글.kt"
+      ]
+    },
+    {
+      "title": "ctxAttack <script>bad</script>",
+      "summary": "İ K NBSP wide　line separator"
+    },
+    {
+      "title": "alpha"
+    },
+    {
+      "summary": "beta"
+    },
+    {
+      "title": "emoji 😀",
+      "summary": "needle"
+    },
+    {
+      "title": [
+        "ignored"
+      ],
+      "files": [
+        42
+      ],
+      "future": "nevermatch"
+    },
+    {
+      "title": "조합 title"
+    },
+    {
+      "files": "stringfile-only-marker"
+    }
+  ],
+  "queries": [
+    {
+      "query": "timeout cache",
+      "scope": "all"
+    },
+    {
+      "query": "한글.KT",
+      "scope": "logs"
+    },
+    {
+      "query": "MASTER_PLAN",
+      "scope": "documents"
+    },
+    {
+      "query": "alpha beta",
+      "scope": "all"
+    },
+    {
+      "query": "NEEDLE",
+      "scope": "all"
+    },
+    {
+      "query": "ctxAttack",
+      "scope": "logs"
+    },
+    {
+      "query": "İ",
+      "scope": "all"
+    },
+    {
+      "query": "K",
+      "scope": "logs"
+    },
+    {
+      "query": "😀",
+      "scope": "all"
+    },
+    {
+      "query": "nevermatch",
+      "scope": "all"
+    },
+    {
+      "query": "line separator",
+      "scope": "all"
+    },
+    {
+      "query": "page",
+      "scope": "logs"
+    },
+    {
+      "query": "조합",
+      "scope": "all"
+    },
+    {
+      "query": "controlmatch",
+      "scope": "documents"
+    },
+    {
+      "query": "42",
+      "scope": "logs"
+    },
+    {
+      "query": "stringfile-only-marker",
+      "scope": "logs"
+    }
+  ]
+}
