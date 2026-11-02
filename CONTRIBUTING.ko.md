@@ -4,13 +4,37 @@
 
 ctx-kit 저장소를 수정하고 검증한 뒤 PR과 머지를 거치는 절차입니다. 다른 프로젝트에 ctx-kit을 설치하려면 [시작하기](docs/ko/getting-started.md)를 참고하세요.
 
+## 작은 기여부터 시작하기
+
+한국어와 영어를 모두 사용할 수 있습니다. 유료 AI 도구나 원본 저장소의 쓰기 권한이 없어도 됩니다. 다음과 같은 작업부터 참여할 수 있습니다.
+
+- 직접 확인한 예제로 설치·복구 설명을 명확하게 다듬기.
+- 최소 합성 입력과 정확한 조작 순서로 CLI·뷰어 문제 제보하기.
+- 파일 경로·Unicode·중단된 쓰기 등 현재 CLI 동작의 회귀 사례 추가하기.
+- 테스트한 커밋·환경·결과·미실시 항목을 구분해 플랫폼·브라우저 검증 보고하기.
+
+버그와 제안은 [이슈 양식](https://github.com/nemory-dev/ctx-kit/issues/new/choose)을 사용하세요. 큰 리팩터링, 공개 API, 저장 형식, 의존성, CI 변경은 구현 전에 범위를 논의합니다. AI를 활용한 기여도 환영하지만 변경 내용을 이해하고 검증 결과를 확인해야 하며, 비공개 프롬프트나 대화는 포함하지 않습니다.
+
+[행동 강령](CODE_OF_CONDUCT.md)을 따르고, 보안·개인정보 문제는 [SECURITY.md](SECURITY.md)의 절차로 제보하세요. 로그·패치를 공유하기 전 Git 작성자 정보를 포함한 [공개 점검 안내](docs/maintainers/publication.md)를 확인합니다. 기여에는 기존 [MIT 라이선스](LICENSE)가 적용되며 제3자 자료의 고지는 보존합니다.
+
 ## 준비 사항
 
 - Bash, 기본 Unix 도구, Git. 아래 절차는 macOS 또는 Linux에서 실행합니다.
 - CI와 맞춘 Python **3.11**. 테스트는 표준 라이브러리만 사용합니다.
+- 내장 JavaScript의 DOM 대역 검사에는 선택적으로 Node.js를 사용합니다. 없으면 건너뛴 테스트를 기록하고 브라우저 동작을 검증했다고 표현하지 않습니다. 이 검사도 실제 브라우저 실행은 아닙니다.
 - GitHub 계정. PR·검사·머지에 GitHub 웹 UI를 사용하면 [GitHub CLI](https://cli.github.com/manual/)는 선택 사항입니다. CLI 예시는 `gh auth status`가 성공한 상태를 가정합니다.
 
 명령은 저장소 루트에서 실행합니다. 테스트가 임시 프로젝트를 만들므로 이 체크아웃에서 `ctx.sh init`을 실행할 필요는 없습니다.
+
+## 저장소 구조
+
+| 경로 | 책임 |
+| --- | --- |
+| `ctx.sh` | 단독 배포 CLI와 내장 Python reader·저장 코드, 오프라인 HTML/CSS/JS |
+| `AGENT_RULES.md` | 내장 초기화 템플릿과 일치시킬 규칙 원본 |
+| `tests/test_*.py` | 임시 복사 설치를 사용하는 Python 표준 라이브러리 회귀 테스트 |
+| `tests/fixtures/` | 합성 입력과 선택적 Node DOM 대역 |
+| `docs/en/`, `docs/ko/` | 서로 대응하는 사용자 가이드 |
 
 ## CI와 main 보호 정책
 
@@ -23,7 +47,7 @@ ctx-kit 저장소를 수정하고 검증한 뒤 PR과 머지를 거치는 절차
 
 두 작업이 모두 성공해야 합니다. 한 작업이 실패해도 다른 작업은 취소되지 않으며, 각 작업의 제한 시간은 10분입니다. 로그에 도구 버전이 표시되고 `-latest` 실행 환경 이미지는 바뀔 수 있습니다. Windows는 이 CI 매트릭스에 포함되지 않습니다.
 
-**2026-10-25**에 확인한 원본 저장소의 `main` 정책은 다음과 같습니다.
+**2026-11-02**에 확인한 원본 저장소의 `main` 정책은 다음과 같습니다.
 
 - 관리자 변경을 포함한 모든 변경은 PR을 거칩니다. PR 우회 예외는 설정되어 있지 않습니다.
 - GitHub Actions가 제공하는 위 두 검사가 모두 필수이며, 머지 전에 최신 `main` 변경을 반영해야 합니다.
@@ -57,7 +81,7 @@ git status --short
 git fetch "$BASE_REMOTE"
 git switch main
 git merge --ff-only "${BASE_REMOTE}/main"
-git switch -c codex/my-change
+git switch -c contrib/my-change
 ```
 
 전환이나 fast-forward가 실패하면 표시된 로컬 작업 또는 갈라진 이력을 확인한 뒤 진행하세요. 기존 파일과 미완료 작업을 보존합니다.
@@ -93,11 +117,11 @@ git push -u origin HEAD
 `git push`가 출력한 링크를 열거나 [GitHub CLI로 PR을 생성](https://cli.github.com/manual/gh_pr_create)합니다.
 
 ```bash
-PR_SOURCE=codex/my-change
+PR_SOURCE=contrib/my-change
 gh pr create --repo nemory-dev/ctx-kit --base main --head "$PR_SOURCE"
 ```
 
-fork라면 `PR_SOURCE`를 `YOUR_LOGIN:codex/my-change`로 지정하고, `YOUR_LOGIN`은 fork 소유자의 GitHub 로그인으로 바꾸세요. 명령이 제목·본문을 입력받고 PR URL을 출력합니다. 해결할 문제, 바뀐 동작, 수행한 검증, 남은 제약을 적습니다.
+fork라면 `PR_SOURCE`를 `YOUR_LOGIN:contrib/my-change`로 지정하고, `YOUR_LOGIN`은 fork 소유자의 GitHub 로그인으로 바꾸세요. 명령이 제목·본문을 입력받고 PR URL을 출력합니다. 해결할 문제, 바뀐 동작, 수행한 검증, 남은 제약을 적습니다.
 
 ## 5. PR 검사와 최신 main 반영하기
 
@@ -157,8 +181,8 @@ PR이 머지되고 `main` 푸시 CI도 성공하면 작업 트리의 변경을 �
 git fetch "$BASE_REMOTE"
 git switch main
 git merge --ff-only "${BASE_REMOTE}/main"
-git branch -d codex/my-change
-git push origin --delete codex/my-change
+git branch -d contrib/my-change
+git push origin --delete contrib/my-change
 git status --short
 ```
 

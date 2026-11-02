@@ -1,12 +1,23 @@
-# ctx-kit
+# ctx-kit — project context for AI coding agents
 
 Keep project decisions, progress, and next actions available when you switch AI coding agents.
 
-[한국어](README.ko.md) · [Getting started](docs/en/getting-started.md) · [Configuration](docs/en/configuration.md) · [Workflows](docs/en/workflows.md) · [Troubleshooting](docs/en/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
+[한국어](README.ko.md) · [Getting started](docs/en/getting-started.md) · [Configuration](docs/en/configuration.md) · [Workflows](docs/en/workflows.md) · [Troubleshooting](docs/en/troubleshooting.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
 
 ctx-kit is a small Bash CLI backed by Python's standard library. It creates editable project context, links instruction-file paths to one rules file, and records work units in a local JSONL timeline. It makes no LLM API calls and needs no API key or hosted service.
 
 Use it when a new session needs to know **what was decided, what changed, what was verified, and what comes next**. The files travel between tools; the agent still has to read and follow them.
+
+## Contributions welcome
+
+You do not need a paid AI tool or repository write access to contribute. English and Korean issues, documentation improvements, reproducible bug reports, regression tests, and platform test results are welcome.
+
+- **Try the CLI:** follow the safe demo below and the [getting-started guide](docs/en/getting-started.md).
+- **Report a problem or propose a change:** use the [issue templates](https://github.com/nemory-dev/ctx-kit/issues/new/choose) with a small synthetic example.
+- **Make a first contribution:** see [contribution ideas and the fork-to-PR workflow](CONTRIBUTING.md). Both required CI jobs run on every PR.
+- **Report a security or privacy problem:** follow [SECURITY.md](SECURITY.md) before sharing details publicly.
+
+Please follow the [code of conduct](CODE_OF_CONDUCT.md). Keep credentials, personal information, and private project context out of contributions.
 
 ## Quick start
 
@@ -163,4 +174,4 @@ Use a work branch, run local checks, push only reviewed files, and open a PR tar
 
 ## License
 
-MIT
+[MIT](LICENSE). Contributions are shared under the repository's license. Preserve notices for any third-party material you are authorized to contribute.

@@ -2,6 +2,12 @@
 .ctx-local/
 sample-context/
 
+# Local environment credentials; keep safe example files shareable.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
 # Python
 __pycache__/
 *.pyc
