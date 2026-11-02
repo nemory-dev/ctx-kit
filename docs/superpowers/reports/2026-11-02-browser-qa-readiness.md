@@ -26,6 +26,19 @@
 
 전체 검증은 `python3 -B -m unittest discover -s tests -v`로 실행했다. 버전별 대상은 `tests/`에서 `python3 -B -m unittest -v test_context_reader test_context_search test_handoff test_view_context`로 실행했고, CLI 자식 프로세스도 같은 Python을 선택하도록 환경을 맞췄다. 데모 재생성 절차는 다운로드 안내에 있다.
 
+## 사용자 수동 검증 결과
+
+2026-11-02, 사용자가 PR #9의 `c80725a`에 포함된 [데모](../../qa/search-handoff/demo.html)를 Windows / Chrome `156.0.8078.49`에서 직접 확인했다. 다운로드 안내의 우선 확인할 네 가지 항목에 대해 모두 성공했다고 보고했다. 아래 결과는 사용자 보고이며 에이전트의 브라우저 실행이나 자동 검증 결과가 아니다.
+
+| 항목 | 보고 결과 |
+| --- | --- |
+| 파일 열기·화면·탭 | 성공 |
+| 검색·출처 이동·뒤로가기 | 성공 |
+| 페이지·한글 입력·키보드·좁은 화면 | 성공 |
+| 인수인계 복사·붙여넣기 | 성공. 자동·수동 복사 여부는 미구분 |
+
+추가 확인 항목의 개별 결과와 스크린샷·콘솔·네트워크 로그는 제공되지 않았다. 복사 성공은 확인됐으나 클립보드 권한 허용·거부·API 부재의 실브라우저 분기별 검증으로 확대하지 않는다. 데모와 자동 검증 결과 파일은 변경하지 않았으며, `automated-results.json`의 `nodeBehavior.realBrowser=false`는 기존 Node DOM 대역 검증 범위를 그대로 나타낸다.
+
 ## 합성 부하 재측정
 
 재현 명령은 `python3 -B tests/fixtures/context-read/measure.py`이며 [원시 결과](../../../tests/fixtures/context-read/performance-2026-11-02-qa.jsonl)를 함께 보존한다. macOS arm64 / Python 3.11.8 / Node 26.12.1에서 독립 임시 프로젝트로 순서대로 측정한 단일 관측이다. Node 수치는 DOM 대역의 동기 처리 시간이며 실제 브라우저 paint·레이아웃·권한·총 peak heap 측정이 아니다.
@@ -43,6 +56,6 @@
 
 ## 남은 사람 확인
 
-Chrome·Edge·Safari에서 실제 파일 열기, 화면 배치·키보드·클립보드 권한·네트워크 관측은 미실시다. Python 3.7과 Windows CLI 실제 실행도 미실시다. 테스트 코드의 DOM 대역은 이를 대신하지 않는다.
+Windows / Chrome `156.0.8078.49`의 우선 확인할 네 가지 항목은 위 사용자 보고로 수동 검증 결과를 기록했다. 다른 브라우저·OS 조합과 `occurrence`·`ctxAttack`·명시적 HTTPS 링크 클릭의 추가 확인 항목, 실제 콘솔 오류·자동 HTTP(S) 요청 관측은 개별 결과가 없어 미확인이다. 클립보드 권한 분기별 실브라우저 검증, Python 3.7과 Windows CLI 실제 실행도 미실시다. 테스트 코드의 DOM 대역은 이를 대신하지 않는다.
 
 처음 보는 사람이 정확한 상태·다음 행동·제약·미검증 사항을 설명하기까지의 60초 재개 평가는 별도로 남아 있다. 이미 검색어와 정답을 읽은 참여자의 기능 QA를 처음 보는 사람의 이해도 평가로 집계하지 않는다. 사람 확인은 다운로드 안내의 양식으로 기록한다.
