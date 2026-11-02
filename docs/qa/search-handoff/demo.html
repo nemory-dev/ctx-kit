@@ -1,0 +1,1118 @@
+<!-- ctx-kit-viewer:1 -->
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; script-src 'sha256-aF31iZBvc1+3l9UoaqrHxddcRaxHnSsM5PYB5N27aX0='; style-src 'sha256-VvPoLelKT3H5nFf06SI1DI24Ngw0r0FKYTGny3S7mLI='">
+<title>ctx · Local Context Viewer</title>
+<style>.context-result { width:100%; text-align:left; display:grid; gap:.4rem; overflow-wrap:anywhere; }
+#handoff-text { width:100%; font: .9rem/1.5 ui-monospace,monospace; padding:1rem; }
+mark { background:#fff0a6; color:inherit; }
+.warning-box summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.warning-box .pagination {
+  max-width: 32rem;
+}
+:root {
+  color-scheme:light;
+  --ink:#182d34;
+  --muted:#52666d;
+  --line:#ced9dc;
+  --paper:#fff;
+  --wash:#f3f6f6;
+  --accent:#086e68;
+  --soft:#e3f3ef;
+  font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+* {
+  box-sizing:border-box;
+}
+body {
+  margin:0;
+  color:var(--ink);
+  background:var(--paper);
+}
+button,input,select {
+  font:inherit;
+  color:inherit;
+}
+button,a,input,select {
+  touch-action:manipulation;
+}
+button {
+  cursor:pointer;
+  background:white;
+  border:1px solid var(--line);
+  border-radius:5px;
+  padding:.45rem .75rem;
+}
+button:hover {
+  background:var(--wash);
+}
+button:disabled {
+  cursor:default;
+  opacity:.48;
+}
+a {
+  color:var(--accent);
+  text-underline-offset:.18em;
+}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {
+  outline:3px solid #10857c;
+  outline-offset:3px;
+}
+h1,h2,h3,h4 {
+  line-height:1.25;
+  margin:0 0 .8rem;
+}
+h1 {
+  font-size:1.6rem;
+  letter-spacing:-.035em;
+}
+h2 {
+  font-size:1.35rem;
+}
+h3 {
+  font-size:1.08rem;
+}
+p {
+  margin:.5rem 0 1rem;
+}
+pre,code {
+  font: .88rem/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+pre {
+  margin:.8rem 0;
+  background:var(--wash);
+  padding:1rem;
+  border:1px solid var(--line);
+  border-radius:5px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+code {
+  background:var(--wash);
+  padding:.1rem .2rem;
+}
+pre code {
+  padding:0;
+}
+header {
+  padding:1.4rem 2rem 1.1rem;
+  border-bottom:1px solid var(--line);
+}
+header .eyebrow {
+  font-size:.75rem;
+  font-weight:700;
+  letter-spacing:.12em;
+  color:var(--accent);
+  margin-bottom:.25rem;
+}
+header p {
+  margin:.25rem 0;
+  font-size:.88rem;
+  color:var(--muted);
+}
+.layout {
+  display:grid;
+  grid-template-columns:11rem minmax(0,1fr);
+  min-height:calc(100vh - 170px);
+}
+nav {
+  border-right:1px solid var(--line);
+  padding:1.5rem 1rem;
+}
+nav button {
+  display:block;
+  width:100%;
+  text-align:left;
+  border:0;
+  margin-bottom:.4rem;
+  color:var(--muted);
+  padding:.65rem .8rem;
+}
+nav button[aria-current=page] {
+  background:var(--soft);
+  color:var(--accent);
+  font-weight:700;
+}
+main {
+  min-width:0;
+  padding:1.7rem 2rem;
+  max-width:1400px;
+  width:100%;
+}
+[hidden] {
+  display:none!important;
+}
+.muted,.source-note {
+  color:var(--muted);
+  font-size:.85rem;
+}
+.source-note {
+  margin-top:.25rem;
+}
+.overview-grid {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:2rem;
+  margin-bottom:1.8rem;
+}
+.overview-section {
+  border-top:3px solid var(--accent);
+  padding-top:1rem;
+  min-width:0;
+}
+.section-heading {
+  display:flex;
+  gap:1rem;
+  justify-content:space-between;
+  align-items:baseline;
+  margin-bottom:.25rem;
+}
+.section-heading button {
+  font-size:.8rem;
+  white-space:nowrap;
+}
+.git-snapshot {
+  border-top:1px solid var(--line);
+  padding:1.2rem 0;
+  margin-bottom:1.5rem;
+}
+.git-snapshot summary {
+  cursor:pointer;
+  color:var(--accent);
+}
+.git-snapshot ul {
+  margin:.5rem 0;
+  padding-left:1.2rem;
+}
+.warning-box {
+  background:#fff7e8;
+  border-left:3px solid #a56a08;
+  padding:.8rem 1rem;
+  margin-bottom:1.5rem;
+}
+.warning-box h2 {
+  font-size:1rem;
+}
+.warning-box ul {
+  padding-left:1.2rem;
+  margin:.4rem 0;
+}
+.filters {
+  display:grid;
+  grid-template-columns:minmax(12rem,2fr) minmax(8rem,1fr) minmax(10rem,1fr) minmax(10rem,1fr);
+  gap:.75rem;
+  margin-bottom:.8rem;
+}
+.field {
+  display:flex;
+  flex-direction:column;
+  gap:.25rem;
+  min-width:0;
+}
+.field label {
+  font-size:.8rem;
+  font-weight:650;
+}
+.field input,.field select {
+  width:100%;
+  border:1px solid var(--line);
+  border-radius:5px;
+  background:white;
+  padding:.5rem .6rem;
+  min-height:2.5rem;
+}
+.file-field {
+  grid-column:1/4;
+}
+.reset-field {
+  align-self:end;
+}
+.filter-meta {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  gap:.5rem;
+  color:var(--muted);
+  font-size:.85rem;
+  margin-bottom:1rem;
+}
+.timeline-grid {
+  display:grid;
+  grid-template-columns:minmax(15rem,.95fr) minmax(18rem,1.2fr);
+  gap:1.5rem;
+  align-items:start;
+}
+.entry-list {
+  display:flex;
+  flex-direction:column;
+  gap:0;
+  border-top:1px solid var(--line);
+}
+.entry-row {
+  display:block;
+  width:100%;
+  text-align:left;
+  border:0;
+  border-bottom:1px solid var(--line);
+  border-radius:0;
+  padding:.85rem .75rem;
+  overflow-wrap:anywhere;
+}
+.entry-row[aria-pressed=true] {
+  background:var(--soft);
+  box-shadow:inset 3px 0 var(--accent);
+}
+.entry-title {
+  display:block;
+  font-weight:650;
+}
+.entry-summary {
+  display:block;
+  font-size:.85rem;
+  color:var(--muted);
+  margin-top:.2rem;
+  white-space:pre-wrap;
+}
+.entry-meta {
+  display:block;
+  font-size:.75rem;
+  color:var(--muted);
+  margin-top:.4rem;
+}
+.entry-detail {
+  min-width:0;
+  background:var(--wash);
+  border:1px solid var(--line);
+  border-radius:5px;
+  padding:1.15rem;
+  overflow-wrap:anywhere;
+}
+.entry-detail h3 {
+  font-size:1.15rem;
+}
+.entry-detail p {
+  white-space:pre-wrap;
+}
+.entry-detail dl {
+  display:grid;
+  grid-template-columns:6rem minmax(0,1fr);
+  gap:.4rem .7rem;
+  font-size:.85rem;
+}
+.entry-detail dt {
+  color:var(--muted);
+}
+.entry-detail dd {
+  margin:0;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+.file-list {
+  list-style:none;
+  padding:0;
+}
+.file-list li {
+  margin:.3rem 0;
+}
+.file-button {
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:.8rem;
+  text-align:left;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  max-width:100%;
+}
+.pagination {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:.6rem;
+  margin-top:1rem;
+  font-size:.85rem;
+}
+.recent-list {
+  border-top:1px solid var(--line);
+}
+.document-toolbar {
+  max-width:32rem;
+  margin-bottom:1.2rem;
+}
+.document-body {
+  max-width:80ch;
+  overflow-wrap:anywhere;
+}
+.document-body p {
+  white-space:pre-wrap;
+}
+.document-body h1,.document-body h2,.document-body h3,.document-body h4,.document-body h5,.document-body h6 {
+  scroll-margin-top:1rem;
+  margin-top:1.5rem;
+}
+.document-body ul,.document-body ol {
+  padding-left:1.6rem;
+}
+.document-body blockquote {
+  border-left:3px solid var(--line);
+  margin:1rem 0;
+  padding:.1rem 1rem;
+  color:var(--muted);
+}
+.document-body li {
+  margin:.25rem 0;
+  white-space:pre-wrap;
+}
+.document-body .raw-block {
+  white-space:pre-wrap;
+}
+.document-body .image-alt {
+  color:var(--muted);
+  font-style:italic;
+}
+.empty-state {
+  padding:1rem 0;
+  color:var(--muted);
+}
+footer {
+  padding:1rem 2rem;
+  border-top:1px solid var(--line);
+  font-size:.8rem;
+  color:var(--muted);
+}
+.skip-link {
+  position:absolute;
+  left:1rem;
+  top:-5rem;
+  background:white;
+  padding:.6rem;
+  z-index:5;
+}
+.skip-link:focus {
+  top:1rem;
+}
+@media(min-width:1000px) {
+  nav {
+    position:sticky;
+    top:0;
+    align-self:start;
+  }
+  .entry-detail {
+    position:sticky;
+    top:1rem;
+    max-height:calc(100vh - 2rem);
+    overflow:auto;
+  }
+}
+@media(max-width:900px) {
+  header {
+    padding:1.2rem;
+  }
+  .layout {
+    grid-template-columns:8.5rem minmax(0,1fr);
+  }
+  nav {
+    padding:1rem .5rem;
+  }
+  main {
+    padding:1.25rem;
+  }
+  .overview-grid {
+    grid-template-columns:1fr;
+    gap:1.5rem;
+  }
+  .timeline-grid {
+    grid-template-columns:1fr;
+  }
+  .filters {
+    grid-template-columns:1fr 1fr;
+  }
+  .file-field {
+    grid-column:1/-1;
+  }
+  .reset-field {
+    grid-column:1/-1;
+  }
+  .entry-detail {
+    position:static;
+  }
+}
+@media(max-width:540px) {
+  :root {
+    font-size:15px;
+  }
+  header {
+    padding:1rem;
+  }
+  .layout {
+    display:block;
+  }
+  nav {
+    display:flex;
+    gap:.3rem;
+    padding:.6rem 1rem;
+    border-right:0;
+    border-bottom:1px solid var(--line);
+  }
+  nav button {
+    margin:0;
+    width:auto;
+    text-align:center;
+    padding:.5rem .7rem;
+  }
+  main {
+    padding:1.1rem 1rem;
+  }
+  .filters {
+    grid-template-columns:1fr 1fr;
+    gap:.6rem;
+  }
+  .search-field {
+    grid-column:1/-1;
+  }
+  .field label {
+    font-size:.75rem;
+  }
+  .section-heading {
+    flex-wrap:wrap;
+    gap:.3rem;
+  }
+  .entry-detail dl {
+    grid-template-columns:1fr;
+    gap:.1rem;
+  }
+  .entry-detail dd {
+    margin-bottom:.4rem;
+  }
+  footer {
+    padding:1rem;
+  }
+  .pagination {
+    flex-wrap:wrap;
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  * {
+    scroll-behavior:auto!important;
+  }
+}
+</style>
+</head>
+<body>
+<a id="skip-main" class="skip-link" href="#main-content">본문으로 이동</a>
+<header>
+<div class="eyebrow">CTX / LOCAL CONTEXT</div>
+<h1 id="project-name">로컬 컨텍스트</h1>
+<p>생성 시점의 스냅샷 · <span id="generated-at"></span></p>
+<p id="snapshot-age"></p>
+<p id="context-path"></p>
+<p>갱신: <code>bash ctx.sh view</code> 또는 <code>bash scripts/ctx.sh view</code>를 다시 실행하세요. 브라우저 새로고침만으로 원본이 갱신되지는 않습니다.</p>
+</header>
+<div class="layout">
+<nav aria-label="컨텍스트 탐색">
+<button id="nav-overview" type="button" aria-current="page">개요</button>
+<button id="nav-timeline" type="button">작업 기록</button>
+<button id="nav-documents" type="button">문서</button>
+<button id="nav-context-search" type="button">통합 검색</button>
+<button id="nav-handoff" type="button">인수인계</button>
+</nav>
+<main id="main-content" tabindex="-1">
+<aside id="warnings" class="warning-box" aria-label="수집 경고" hidden>
+<details id="warnings-details"><summary id="warnings-summary">확인이 필요한 내용</summary>
+<div id="warnings-panel" hidden><ul id="warning-list"></ul>
+<div class="pagination"><button id="warning-previous-page" type="button">이전 경고</button><span id="warning-page-status"></span><button id="warning-next-page" type="button">다음 경고</button></div></div>
+</details>
+</aside>
+<section id="view-overview" aria-labelledby="overview-heading">
+<h2 id="overview-heading">현재 컨텍스트</h2>
+<p class="source-note">문서 기재와 기록 당시 로그, 생성 시점 Git 조회를 출처별로 표시합니다.</p>
+<div class="overview-grid">
+<section class="overview-section"><div class="section-heading"><h3>현재 상태</h3><button id="open-plan-current" type="button">전체 계획 문서</button></div><p class="source-note">문서 기재 · MASTER_PLAN</p><div id="current-state" class="document-body"></div></section>
+<section class="overview-section"><div class="section-heading"><h3>다음 행동</h3><button id="open-plan-next" type="button">전체 계획 문서</button></div><p class="source-note">문서 기재 · 체크 표시는 원문을 따릅니다.</p><div id="next-actions" class="document-body"></div></section>
+</div>
+<section class="git-snapshot" aria-labelledby="git-heading"><h3 id="git-heading">생성 시점 Git 조회</h3><div id="git-content"></div></section>
+<section aria-labelledby="recent-heading"><h3 id="recent-heading">최근 작업 5건</h3><div id="recent-entries" class="recent-list"></div></section>
+</section>
+<section id="view-timeline" aria-labelledby="timeline-heading" hidden>
+<h2 id="timeline-heading">작업 기록</h2>
+<p class="source-note">활성·보관 기록을 모두 표시합니다. 같은 내용의 기록도 별개로 보존합니다.</p>
+<div class="filters">
+<div class="field search-field"><label for="search">제목·요약·파일명 검색</label><input id="search" type="search" autocomplete="off" placeholder="검색어 입력"></div>
+<div class="field"><label for="type-filter">유형</label><select id="type-filter"><option value="">모든 유형</option></select></div>
+<div class="field"><label for="date-from">시작일 · 브라우저 현지 날짜</label><input id="date-from" type="date"></div>
+<div class="field"><label for="date-to">종료일 · 브라우저 현지 날짜</label><input id="date-to" type="date"></div>
+<div class="field file-field"><label for="file-filter">정확한 파일 경로 · 원문 문자열 기준</label><select id="file-filter"><option value="">모든 파일</option></select></div>
+<div class="reset-field"><button id="clear-filters" type="button">필터 해제</button></div>
+</div>
+<div class="filter-meta"><span id="result-count" role="status" aria-live="polite"></span><span id="unknown-dates"></span></div>
+<div class="timeline-grid"><div><div id="entry-list" class="entry-list" aria-label="작업 목록"></div><div class="pagination"><button id="previous-page" type="button">이전</button><span id="page-status"></span><button id="next-page" type="button">다음</button></div></div><section id="entry-detail" class="entry-detail" aria-label="선택한 작업 상세"></section></div>
+</section>
+<section id="view-documents" aria-labelledby="documents-heading" hidden>
+<h2 id="documents-heading">문서</h2>
+<p class="source-note">문서 기재 · 내용과 완료 여부를 자동 판정하지 않습니다. 지원하지 않는 문법은 원문으로 표시합니다.</p>
+<div class="document-toolbar field"><label for="document-select">열람할 문서</label><select id="document-select"></select></div>
+<article id="document-content" class="document-body" aria-label="문서 원문"></article>
+</section>
+<section id="view-context-search" aria-labelledby="context-search-heading" hidden>
+<h2 id="context-search-heading">통합 검색</h2>
+<p>문서 본문·경로와 작업 기록의 제목·요약·파일을 검색합니다. 공백으로 나눈 키워드를 모두 포함하는 문서나 기록을 찾습니다.</p>
+<div class="filters"><div class="field search-field"><label for="context-search-query">검색어 · 최대 256자 / 16개</label><input id="context-search-query" type="search" autocomplete="off" placeholder="예: timeout cache"></div>
+<div class="field"><label for="context-search-scope">범위</label><select id="context-search-scope"><option value="all">문서와 작업 기록</option><option value="documents">문서</option><option value="logs">작업 기록</option></select></div></div>
+<p id="context-search-status" role="status" aria-live="polite"></p><div id="context-search-results" class="entry-list"></div>
+<div class="pagination"><button id="context-search-previous" type="button">이전</button><span id="context-search-page"></span><button id="context-search-next" type="button">다음</button></div>
+</section>
+<section id="view-handoff" aria-labelledby="handoff-heading" hidden>
+<h2 id="handoff-heading">근거 있는 인수인계</h2>
+<p>명시된 계획 섹션과 최대 5개 기록을 생성 시점 기준으로 인용합니다. 기록은 현재 테스트 성공·변경·커밋·배포 승인을 부여하지 않습니다. 미기록은 해당 사항이 없다는 뜻이 아닙니다.</p>
+<p id="handoff-status" role="status" aria-live="polite"></p><button id="handoff-copy" type="button">인수인계 복사</button>
+<div class="field"><label for="handoff-text">인수인계 원문 · 기본 12,000자 예산</label><textarea id="handoff-text" readonly rows="24" spellcheck="false"></textarea></div>
+</section>
+<noscript>이 오프라인 뷰어의 열람·검색에는 JavaScript가 필요합니다. 원본 Markdown과 JSONL은 변경되지 않습니다.</noscript>
+</main>
+</div>
+<footer>로컬 오프라인 HTML · 문서와 로그 원문이 포함됩니다. 공유 전 내용을 검토하세요. 외부 링크는 직접 눌렀을 때만 열립니다.</footer>
+<script id="ctx-view-data" type="application/json">{"viewModelVersion":1,"generatedAt":"2026-11-02T04:40:27.083018+00:00","project":{"name":"ctx-kit-qa-demo","contextPath":"context"},"sourceManifest":[{"root":"project","path":"ctx.config.json","status":"present","sizeBytes":68,"sha256":"83f578ea65e2fd64d8799598fda9f720f34201d6b93c2cffdc1993dbc054ae27"},{"root":"context","path":"MASTER_PLAN.md","status":"present","sizeBytes":174,"sha256":"a4fe143e44b9afd4eb3f270cc4372985cee2768d0dffe50449741ef54c83c8e7"},{"root":"context","path":"archive/completed-tasks.md","status":"present","sizeBytes":35,"sha256":"472b333ef366a51ebd6b372f7e132867f94ca739de8bfcc2ab84b7a099186f6f"},{"root":"context","path":"archive/decisions-deprecated.md","status":"present","sizeBytes":41,"sha256":"8d7d578edf5b6c038a221a5e510879e3a18cf3204bcc2c468bf469c32ad09bab"},{"root":"context","path":"archive/timeline-old.jsonl","status":"present","sizeBytes":50,"sha256":"30721299aea286632102e93e7e29ba6568038597fb6219fd214176711ba162c5"},{"root":"context","path":"backlog.md","status":"present","sizeBytes":36,"sha256":"b40e0f286a93898da597612e57ec1f609a709e12d8131ec43c205bdb19bf680a"},{"root":"context","path":"decisions.md","status":"present","sizeBytes":88,"sha256":"d3fd2b277db3930e012b247f3a59c513f12d618c5656945b020b90ddde4c06b0"},{"root":"context","path":"work-log/timeline-digest.md","status":"present","sizeBytes":29,"sha256":"5a7cf3c1db49da65c5390f017a3f0fa54b7a6a2eb6f81f7ceb05d37a37d3e456"},{"root":"context","path":"work-log/timeline.jsonl","status":"present","sizeBytes":10931,"sha256":"d89fab0c7e914c351d3bb9c816ef198c9e38d1feef31962c6f04d78019dbc6d3"}],"snapshotId":"sha256:2a1a9506667515743ccc468ee7e997a6d12eec84847c12db9e8b01a16d3b13a7","documents":[{"key":"plan","path":"MASTER_PLAN.md","sourceKind":"document","status":"present","text":"# Plan\n## Constraints\nPreserve protected files.\n## Current State\nCache ready.\n## Next Actions\nTest timeout.\n## Verification\nReported unittest.\n## Unverified\nWindows not run.\n"},{"key":"decisions","path":"decisions.md","sourceKind":"document","status":"present","text":"# Decisions\nUse offline files to avoid a server.\n\n[HTTPS example](https://example.com/)\n"},{"key":"backlog","path":"backlog.md","sourceKind":"document","status":"present","text":"# Backlog\nConsider reranking later.\n"},{"key":"digest","path":"work-log/timeline-digest.md","sourceKind":"document","status":"present","text":"# Digest\nmilestone recorded.\n"},{"key":"completed","path":"archive/completed-tasks.md","sourceKind":"document","status":"present","text":"# Archive\ncompleted work recorded.\n"},{"key":"deprecated","path":"archive/decisions-deprecated.md","sourceKind":"document","status":"present","text":"# Archive\nsuperseded decision preserved.\n"}],"entries":[{"key":"work-log/timeline.jsonl:1","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":1,"record":{"title":"retry TIMEOUT cache","summary":"backoff reported","files":["src/Retry.kt"],"createdAt":"2026-10-30T12:00:00+09:00"},"recordText":"{\"title\": \"retry TIMEOUT cache\", \"summary\": \"backoff reported\", \"files\": [\"src/Retry.kt\"], \"createdAt\": \"2026-10-30T12:00:00+09:00\"}","timestampUtc":1793329200.0,"commitObjectRef":null,"commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:6","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":6,"record":{"title":"page 000","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 000\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:7","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":7,"record":{"title":"page 001","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 001\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:8","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":8,"record":{"title":"page 002","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 002\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:9","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":9,"record":{"title":"page 003","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 003\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:10","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":10,"record":{"title":"page 004","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 004\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:11","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":11,"record":{"title":"page 005","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 005\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:12","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":12,"record":{"title":"page 006","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 006\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:13","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":13,"record":{"title":"page 007","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 007\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:14","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":14,"record":{"title":"page 008","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 008\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:15","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":15,"record":{"title":"page 009","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 009\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:16","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":16,"record":{"title":"page 010","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 010\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:17","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":17,"record":{"title":"page 011","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 011\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:18","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":18,"record":{"title":"page 012","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 012\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:19","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":19,"record":{"title":"page 013","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 013\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:20","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":20,"record":{"title":"page 014","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 014\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:21","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":21,"record":{"title":"page 015","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 015\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:22","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":22,"record":{"title":"page 016","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 016\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:23","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":23,"record":{"title":"page 017","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 017\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:24","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":24,"record":{"title":"page 018","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 018\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:25","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":25,"record":{"title":"page 019","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 019\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:26","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":26,"record":{"title":"page 020","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 020\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:27","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":27,"record":{"title":"page 021","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 021\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:28","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":28,"record":{"title":"page 022","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 022\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:29","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":29,"record":{"title":"page 023","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 023\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:30","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":30,"record":{"title":"page 024","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 024\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:31","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":31,"record":{"title":"page 025","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 025\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:32","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":32,"record":{"title":"page 026","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 026\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:33","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":33,"record":{"title":"page 027","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 027\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:34","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":34,"record":{"title":"page 028","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 028\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:35","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":35,"record":{"title":"page 029","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 029\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:36","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":36,"record":{"title":"page 030","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 030\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:37","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":37,"record":{"title":"page 031","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 031\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:38","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":38,"record":{"title":"page 032","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 032\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:39","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":39,"record":{"title":"page 033","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 033\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:40","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":40,"record":{"title":"page 034","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 034\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:41","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":41,"record":{"title":"page 035","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 035\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:42","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":42,"record":{"title":"page 036","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 036\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:43","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":43,"record":{"title":"page 037","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 037\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:44","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":44,"record":{"title":"page 038","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 038\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:45","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":45,"record":{"title":"page 039","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 039\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:46","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":46,"record":{"title":"page 040","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 040\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:47","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":47,"record":{"title":"page 041","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 041\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:48","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":48,"record":{"title":"page 042","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 042\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:49","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":49,"record":{"title":"page 043","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 043\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:50","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":50,"record":{"title":"page 044","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 044\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:51","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":51,"record":{"title":"page 045","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 045\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:52","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":52,"record":{"title":"page 046","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 046\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:53","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":53,"record":{"title":"page 047","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 047\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:54","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":54,"record":{"title":"page 048","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 048\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:55","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":55,"record":{"title":"page 049","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 049\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:56","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":56,"record":{"title":"page 050","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 050\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:57","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":57,"record":{"title":"page 051","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 051\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:58","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":58,"record":{"title":"page 052","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 052\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:59","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":59,"record":{"title":"page 053","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 053\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:60","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":60,"record":{"title":"page 054","summary":"Synthetic pagination record.","createdAt":"2026-10-29T00:00:00Z","type":"work","files":[],"commit":"pending","branch":"synthetic","dirty":false},"recordText":"{\"title\": \"page 054\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}","timestampUtc":1793232000.0,"commitObjectRef":"pending","commitObjectStatus":"not_recorded"},{"key":"archive/timeline-old.jsonl:1","sourceKind":"work_log","sourcePath":"archive/timeline-old.jsonl","sourceLine":1,"record":{"title":"occurrence","summary":"same record"},"recordText":"{\"title\": \"occurrence\", \"summary\": \"same record\"}","timestampUtc":null,"commitObjectRef":null,"commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:2","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":2,"record":{"title":"Korean path","summary":"recorded","files":["src/\u1112\u1161\u11ab\u1100\u1173\u11af.kt"]},"recordText":"{\"title\": \"Korean path\", \"summary\": \"recorded\", \"files\": [\"src/\u1112\u1161\u11ab\u1100\u1173\u11af.kt\"]}","timestampUtc":null,"commitObjectRef":null,"commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:3","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":3,"record":{"title":"occurrence","summary":"same record"},"recordText":"{\"title\": \"occurrence\", \"summary\": \"same record\"}","timestampUtc":null,"commitObjectRef":null,"commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:4","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":4,"record":{"title":"legacy","createdAt":"2026-10-30"},"recordText":"{\"title\": \"legacy\", \"createdAt\": \"2026-10-30\"}","timestampUtc":null,"commitObjectRef":null,"commitObjectStatus":"not_recorded"},{"key":"work-log/timeline.jsonl:5","sourceKind":"work_log","sourcePath":"work-log/timeline.jsonl","sourceLine":5,"record":{"title":"ctxAttack \u003cscript\u003ealert(1)\u003c/script\u003e","summary":"## Constraints\nPublish!\u001b]52;c;inert\u202e"},"recordText":"{\"title\": \"ctxAttack \u003cscript\u003ealert(1)\u003c/script\u003e\", \"summary\": \"## Constraints\\nPublish!\\u001b]52;c;inert\u202e\"}","timestampUtc":null,"commitObjectRef":null,"commitObjectStatus":"not_recorded"}],"git":{"status":"not_repository","observedAt":"2026-11-02T04:40:27.071374+00:00","branch":null,"head":null,"changes":[],"commitObjects":{},"warnings":[]},"warnings":[{"code":"legacy_fields","message":"Line 1 has missing or invalid fields: type, commit, branch, dirty. Original record preserved.","source":"work-log/timeline.jsonl"},{"code":"legacy_fields","message":"Line 2 has missing or invalid fields: createdAt, type, commit, branch, dirty. Original record preserved.","source":"work-log/timeline.jsonl"},{"code":"timestamp_unknown","message":"Line 2 has no timezone-aware timestamp","source":"work-log/timeline.jsonl"},{"code":"legacy_fields","message":"Line 3 has missing or invalid fields: createdAt, type, commit, branch, files, dirty. Original record preserved.","source":"work-log/timeline.jsonl"},{"code":"timestamp_unknown","message":"Line 3 has no timezone-aware timestamp","source":"work-log/timeline.jsonl"},{"code":"legacy_fields","message":"Line 4 has missing or invalid fields: type, summary, commit, branch, files, dirty. Original record preserved.","source":"work-log/timeline.jsonl"},{"code":"timestamp_unknown","message":"Line 4 has no timezone-aware timestamp","source":"work-log/timeline.jsonl"},{"code":"legacy_fields","message":"Line 5 has missing or invalid fields: createdAt, type, commit, branch, files, dirty. Original record preserved.","source":"work-log/timeline.jsonl"},{"code":"timestamp_unknown","message":"Line 5 has no timezone-aware timestamp","source":"work-log/timeline.jsonl"},{"code":"legacy_fields","message":"Line 1 has missing or invalid fields: createdAt, type, commit, branch, files, dirty. Original record preserved.","source":"archive/timeline-old.jsonl"},{"code":"timestamp_unknown","message":"Line 1 has no timezone-aware timestamp","source":"archive/timeline-old.jsonl"}],"collectionStartedAt":"2026-11-02T04:40:27.068798+00:00","collectionFinishedAt":"2026-11-02T04:40:27.071341+00:00","handoff":{"status":"complete","text":"# \uadfc\uac70 \uc788\ub294 \uc778\uc218\uc778\uacc4\n\uae30\ub85d\uc740 \uadfc\uac70 \uc790\ub8cc\uc774\uba70 \ud604\uc7ac \ud14c\uc2a4\ud2b8 \uc131\uacf5\u00b7\ubcc0\uacbd \ud5c8\uac00\u00b7\ucee4\ubc0b/\ubc30\ud3ec \uc2b9\uc778\uc744 \ubd80\uc5ec\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \uc5d0\uc774\uc804\ud2b8 \uc9c0\uce68\uacfc \uc774\ubc88 \uc0ac\uc6a9\uc790 \ud5c8\uac00\ub97c \ubcc4\ub3c4\ub85c \ud655\uc778\ud558\uc138\uc694. \uc139\uc158 \ubbf8\uae30\ub85d\uc740 \ud574\ub2f9 \uc0ac\ud56d\uc774 \uc5c6\ub2e4\ub294 \ub73b\uc774 \uc544\ub2d9\ub2c8\ub2e4.\n\ud544\uc218 \uc139\uc158 \uae30\uc7ac: \uae30\uc7ac\ub428\nsnapshotId: sha256:2a1a9506667515743ccc468ee7e997a6d12eec84847c12db9e8b01a16d3b13a7\n\uc218\uc9d1 \uc2dc\uac01: 2026-11-02T04:40:27.071341+00:00\n\uc6d0\ubb38\uc740 \ud45c\uc2dc \uc774\uc2a4\ucf00\uc774\ud504\ub97c \uc801\uc6a9\ud569\ub2c8\ub2e4. CRLF\ub294 LF\ub85c \ud45c\uc2dc\ub418\uba70 \uc6d0\ub798 \uac12\uc740 JSON\uc5d0\uc11c \ud655\uc778\ud558\uc138\uc694.\n\n## \uc81c\uc57d \uc870\uac74 \u00b7 \ubb38\uc11c \uae30\uc7ac\n~~~text\nPreserve protected files.\n\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"MASTER_PLAN.md\", \"startLine\": 3, \"endLine\": 3, \"sha256\": \"a4fe143e44b9afd4eb3f270cc4372985cee2768d0dffe50449741ef54c83c8e7\"}\n\n## \ud604\uc7ac \uc0c1\ud0dc \u00b7 \ubb38\uc11c \uae30\uc7ac\n~~~text\nCache ready.\n\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"MASTER_PLAN.md\", \"startLine\": 5, \"endLine\": 5, \"sha256\": \"a4fe143e44b9afd4eb3f270cc4372985cee2768d0dffe50449741ef54c83c8e7\"}\n\n## \ub2e4\uc74c \ud589\ub3d9 \u00b7 \ubb38\uc11c \uae30\uc7ac\n~~~text\nTest timeout.\n\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"MASTER_PLAN.md\", \"startLine\": 7, \"endLine\": 7, \"sha256\": \"a4fe143e44b9afd4eb3f270cc4372985cee2768d0dffe50449741ef54c83c8e7\"}\n\n## \uac80\uc99d \u00b7 \ubb38\uc11c \uae30\uc7ac\n~~~text\nReported unittest.\n\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"MASTER_PLAN.md\", \"startLine\": 9, \"endLine\": 9, \"sha256\": \"a4fe143e44b9afd4eb3f270cc4372985cee2768d0dffe50449741ef54c83c8e7\"}\n\n## \ubbf8\uac80\uc99d \u00b7 \ubb38\uc11c \uae30\uc7ac\n~~~text\nWindows not run.\n\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"MASTER_PLAN.md\", \"startLine\": 11, \"endLine\": 11, \"sha256\": \"a4fe143e44b9afd4eb3f270cc4372985cee2768d0dffe50449741ef54c83c8e7\"}\n\n## \uc0dd\uc131 \uc2dc\uc810 Git \uc870\ud68c\n~~~text\n{\"status\": \"not_repository\", \"observedAt\": \"2026-11-02T04:40:27.071374+00:00\", \"branch\": null, \"head\": null, \"changeCount\": null}\n~~~\n\n## \uc120\ud0dd\ud55c \uae30\ub85d \u00b7 \ub2f9\uc2dc \ubcf4\uace0\n\n### \uc791\uc5c5 \uae30\ub85d\n\uc81c\ubaa9:\n~~~text\nretry TIMEOUT cache\n~~~\n\uc694\uc57d:\n~~~text\nbackoff reported\n~~~\n\uc6d0\ubb38 JSONL:\n~~~text\n{\"title\": \"retry TIMEOUT cache\", \"summary\": \"backoff reported\", \"files\": [\"src/Retry.kt\"], \"createdAt\": \"2026-10-30T12:00:00+09:00\"}\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"work-log/timeline.jsonl\", \"startLine\": 1, \"endLine\": 1, \"sha256\": \"d89fab0c7e914c351d3bb9c816ef198c9e38d1feef31962c6f04d78019dbc6d3\"}\n\n### \uc791\uc5c5 \uae30\ub85d\n\uc81c\ubaa9:\n~~~text\npage 000\n~~~\n\uc694\uc57d:\n~~~text\nSynthetic pagination record.\n~~~\n\uc6d0\ubb38 JSONL:\n~~~text\n{\"title\": \"page 000\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"work-log/timeline.jsonl\", \"startLine\": 6, \"endLine\": 6, \"sha256\": \"d89fab0c7e914c351d3bb9c816ef198c9e38d1feef31962c6f04d78019dbc6d3\"}\n\n### \uc791\uc5c5 \uae30\ub85d\n\uc81c\ubaa9:\n~~~text\npage 001\n~~~\n\uc694\uc57d:\n~~~text\nSynthetic pagination record.\n~~~\n\uc6d0\ubb38 JSONL:\n~~~text\n{\"title\": \"page 001\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"work-log/timeline.jsonl\", \"startLine\": 7, \"endLine\": 7, \"sha256\": \"d89fab0c7e914c351d3bb9c816ef198c9e38d1feef31962c6f04d78019dbc6d3\"}\n\n### \uc791\uc5c5 \uae30\ub85d\n\uc81c\ubaa9:\n~~~text\npage 002\n~~~\n\uc694\uc57d:\n~~~text\nSynthetic pagination record.\n~~~\n\uc6d0\ubb38 JSONL:\n~~~text\n{\"title\": \"page 002\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"work-log/timeline.jsonl\", \"startLine\": 8, \"endLine\": 8, \"sha256\": \"d89fab0c7e914c351d3bb9c816ef198c9e38d1feef31962c6f04d78019dbc6d3\"}\n\n### \uc791\uc5c5 \uae30\ub85d\n\uc81c\ubaa9:\n~~~text\npage 003\n~~~\n\uc694\uc57d:\n~~~text\nSynthetic pagination record.\n~~~\n\uc6d0\ubb38 JSONL:\n~~~text\n{\"title\": \"page 003\", \"summary\": \"Synthetic pagination record.\", \"createdAt\": \"2026-10-29T00:00:00Z\", \"type\": \"work\", \"files\": [], \"commit\": \"pending\", \"branch\": \"synthetic\", \"dirty\": false}\n~~~\n\ucd9c\ucc98: {\"root\": \"context\", \"path\": \"work-log/timeline.jsonl\", \"startLine\": 9, \"endLine\": 9, \"sha256\": \"d89fab0c7e914c351d3bb9c816ef198c9e38d1feef31962c6f04d78019dbc6d3\"}\n\n## \uc120\uc815\u00b7\uc0dd\ub7b5\n~~~text\n{\"available\": 61, \"selected\": 5, \"omittedByLimit\": 56, \"omittedByBudget\": 0}\n~~~\n\n## \uacbd\uace0 \uc694\uc57d\n~~~text\n{\"total\": 61, \"byCode\": [{\"code\": \"unknown_timestamp\", \"count\": 5, \"samples\": [\"\\\\uc218\\\\uc9d1\\\\ub41c \\\\uae30\\\\ub85d\\\\uc758 \\\\uc2dc\\\\uac04\\\\ub300/\\\\uc2dc\\\\uac01 \\\\ubbf8\\\\ud655\\\\uc778\"], \"omitted\": 4}, {\"code\": \"omission\", \"count\": 56, \"samples\": [\"\\\\uc120\\\\uc815 \\\\uc81c\\\\ud55c \\\\ub610\\\\ub294 \\\\ucd9c\\\\ub825 \\\\uc608\\\\uc0b0\\\\uc73c\\\\ub85c \\\\ucd94\\\\uac00 \\\\uae30\\\\ub85d \\\\uc0dd\\\\ub7b5\"], \"omitted\": 55}]}\n~~~\n\n## \ud45c\uc2dc \ub300\uc0c1 \ud1b5\uacc4\n~~~text\n{\"basis\": \"selected-source-fields\", \"crlfPairs\": 0, \"literalBackslashes\": 0, \"otherControls\": 0}\n~~~\n\n\uae30\ub85d\uc740 \uadfc\uac70 \uc790\ub8cc\uc774\uba70 \ud604\uc7ac \ud14c\uc2a4\ud2b8 \uc131\uacf5\u00b7\ubcc0\uacbd \ud5c8\uac00\u00b7\ucee4\ubc0b/\ubc30\ud3ec \uc2b9\uc778\uc744 \ubd80\uc5ec\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \uc5d0\uc774\uc804\ud2b8 \uc9c0\uce68\uacfc \uc774\ubc88 \uc0ac\uc6a9\uc790 \ud5c8\uac00\ub97c \ubcc4\ub3c4\ub85c \ud655\uc778\ud558\uc138\uc694. \uc139\uc158 \ubbf8\uae30\ub85d\uc740 \ud574\ub2f9 \uc0ac\ud56d\uc774 \uc5c6\ub2e4\ub294 \ub73b\uc774 \uc544\ub2d9\ub2c8\ub2e4.\n","maxChars":12000}}</script>
+<script>(function () {
+  "use strict";
+  const model = JSON.parse(document.getElementById("ctx-view-data").textContent);
+  const $ = function (id) { return document.getElementById(id); };
+  const text = function (value, fallback) { return typeof value === "string" ? value : (fallback === undefined ? "미기록" : fallback); };
+  const node = function (tag, content, className) {
+    const element = document.createElement(tag);
+    if (content !== undefined) element.textContent = content;
+    if (className) element.className = className;
+    return element;
+  };
+  const clear = function (element) { while (element.firstChild) element.removeChild(element.firstChild); };
+  const normalized = function (value) { return text(value, "").normalize("NFC").toLocaleLowerCase(); };
+  const recordOf = function (entry) { return entry.record && typeof entry.record === "object" && !Array.isArray(entry.record) ? entry.record : {}; };
+  const filesOf = function (entry) { const files = recordOf(entry).files; return Array.isArray(files) ? files.filter(function (f) { return typeof f === "string"; }) : []; };
+  const entries = (Array.isArray(model.entries) ? model.entries : []).slice().sort(function (a, b) {
+    const ta = typeof a.timestampUtc === "number" && Number.isFinite(a.timestampUtc) ? a.timestampUtc : null;
+    const tb = typeof b.timestampUtc === "number" && Number.isFinite(b.timestampUtc) ? b.timestampUtc : null;
+    if (ta !== tb) return ta === null ? 1 : (tb === null ? -1 : tb - ta);
+    const pa = text(a.sourcePath, ""), pb = text(b.sourcePath, "");
+    return (pa < pb ? -1 : (pa > pb ? 1 : 0)) || (a.sourceLine - b.sourceLine);
+  });
+  const documents = Array.isArray(model.documents) ? model.documents : [];
+  const byKey = new Map(entries.map(function (entry) { return [entry.key, entry]; }));
+  const docsByKey = new Map(documents.map(function (doc) { return [doc.key, doc]; }));
+  const typeValues = Array.from(new Set(entries.map(function (entry) { return text(recordOf(entry).type, ""); }).filter(Boolean))).sort();
+  const fileValues = Array.from(new Set([].concat.apply([], entries.map(filesOf)))).sort();
+  const searchValues = new Map(entries.map(function (entry) {
+    const record = recordOf(entry);
+    return [entry.key, normalized([text(record.title, ""), text(record.summary, "")].concat(filesOf(entry)).join("\n"))];
+  }));
+  const labels = {plan:"계획 / MASTER_PLAN", decisions:"결정 / decisions", backlog:"백로그 / backlog", digest:"다이제스트 / timeline digest", completed:"보관된 완료 작업", deprecated:"보관된 결정"};
+  const emptyState = function () { return {tab:"overview", sq:"", ss:"all", sp:1, q:"", type:"", from:"", to:"", file:"", entry:"", doc:docsByKey.has("plan") ? "plan" : (documents[0] ? documents[0].key : ""), anchor:"", page:1}; };
+  const validDate = function (value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(value + "T12:00:00");
+    return !Number.isNaN(date.getTime()) && date.getFullYear() === Number(value.slice(0,4)) && date.getMonth() + 1 === Number(value.slice(5,7)) && date.getDate() === Number(value.slice(8,10));
+  };
+  const localDate = function (seconds) {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds)) return null;
+    const date = new Date(seconds * 1000);
+    if (Number.isNaN(date.getTime())) return null;
+    return String(date.getFullYear()).padStart(4,"0") + "-" + String(date.getMonth()+1).padStart(2,"0") + "-" + String(date.getDate()).padStart(2,"0");
+  };
+  const headings = function (source) {
+    const result = [], counts = new Map(); let fence = null;
+    text(source, "").split(/\r?\n/).forEach(function (line, index) {
+      const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (marker) {
+        if (!fence) fence = {char:marker[1][0], length:marker[1].length};
+        else if (marker[1][0] === fence.char && marker[1].length >= fence.length && !line.slice(marker[0].length).trim()) fence = null;
+        return;
+      }
+      if (fence) return;
+      const match = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
+      if (!match) return;
+      const body = match[2].trim();
+      if (!body) return;
+      let end = body.length;
+      while (end > 0 && body[end - 1] === "#") end -= 1;
+      const closing = end > 0 && end < body.length && /\s/.test(body[end - 1]);
+      const title = closing ? body.slice(0, end).trim() : body;
+      const base = normalized(title).replace(/[^\p{L}\p{N}_\-\s]/gu, "").trim().replace(/\s+/g,"-") || "section";
+      const count = counts.get(base) || 0; counts.set(base, count + 1);
+      result.push({line:index, level:match[1].length, title:title, anchor:base + (count ? "-" + count : "")});
+    });
+    return result;
+  };
+  const docHeadings = new Map(documents.map(function (doc) { return [doc.key, headings(doc.text)]; }));
+  const anchorExists = function (key, anchor) { return !anchor || (docHeadings.get(key) || []).some(function (h) { return h.anchor === anchor; }); };
+  const readHash = function () {
+    const defaults = emptyState();
+    try {
+      const raw = location.hash.slice(1);
+      decodeURIComponent(raw);
+      const params = new URLSearchParams(raw);
+      const tabs = ["overview", "timeline", "documents", "context-search", "handoff"];
+      if (tabs.indexOf(params.get("tab")) >= 0) defaults.tab = params.get("tab");
+      if (params.has("sq")) defaults.sq = params.get("sq");
+      if (["all","documents","logs"].includes(params.get("ss"))) defaults.ss=params.get("ss");
+      if (/^[1-9]\d{0,6}$/.test(params.get("sp") || "")) defaults.sp=Number(params.get("sp"));
+      if (params.has("q")) defaults.q = params.get("q");
+      if (typeValues.indexOf(params.get("type")) >= 0) defaults.type = params.get("type");
+      if (fileValues.indexOf(params.get("file")) >= 0) defaults.file = params.get("file");
+      if (validDate(params.get("from") || "")) defaults.from = params.get("from");
+      if (validDate(params.get("to") || "")) defaults.to = params.get("to");
+      if (defaults.from && defaults.to && defaults.from > defaults.to) { defaults.from = ""; defaults.to = ""; }
+      if (byKey.has(params.get("entry"))) defaults.entry = params.get("entry");
+      if (docsByKey.has(params.get("doc"))) defaults.doc = params.get("doc");
+      if (params.has("anchor") && anchorExists(defaults.doc, params.get("anchor"))) defaults.anchor = params.get("anchor");
+      if (/^[1-9]\d{0,6}$/.test(params.get("page") || "")) defaults.page = Number(params.get("page"));
+      return defaults;
+    } catch (_) { return defaults; }
+  };
+  let state = readHash(), composing = false, filtered = [];
+  const writeHash = function (push) {
+    const params = new URLSearchParams();
+    ["tab", "sq", "ss", "q", "type", "from", "to", "file", "entry", "doc", "anchor"].forEach(function (key) { if (state[key]) params.set(key, state[key]); });
+    if (state.sp > 1) params.set("sp", String(state.sp));
+    if (state.page > 1) params.set("page", String(state.page));
+    const hash = "#" + params.toString();
+    if (location.hash !== hash) {
+      try { if(push) history.pushState(null, "", hash); else history.replaceState(null, "", hash); } catch (_) { location.hash = hash; }
+    }
+  };
+  const setState = function (changes) { Object.assign(state, changes); render(); writeHash(); };
+  const goDocument = function (key, anchor) { setState({tab:"documents", doc:key, anchor:anchor || ""}); };
+  const resolvedLink = function (href, sourceDoc) {
+    if (/[\u0000-\u0020\u007f]/.test(href)) return null;
+    if (/^https?:\/\//i.test(href)) {
+      try { const url = new URL(href); return /^(https?:)$/.test(url.protocol) ? {url:url.href} : null; } catch (_) { return null; }
+    }
+    try {
+      const parts = href.split("#");
+      if (parts.length > 2) return null;
+      const fragment = parts.length === 2 ? decodeURIComponent(parts[1]) : "";
+      const path = decodeURIComponent(parts[0]);
+      if (/[\u0000-\u001f\u007f]/.test(path + fragment) || /[:?\\]/.test(path) || path[0] === "/") return null;
+      let target = sourceDoc;
+      if (path) {
+        const segments = text(sourceDoc.path, "").split("/").slice(0, -1);
+        path.split("/").forEach(function (part) { if (part === "..") { if (!segments.length) throw new Error("Outside document scope"); segments.pop(); } else if (part && part !== ".") segments.push(part); });
+        target = documents.find(function (doc) { return doc.path === segments.join("/"); });
+      }
+      if (!target || target.status !== "present" || !anchorExists(target.key, fragment)) return null;
+      return {doc:target.key, anchor:fragment};
+    } catch (_) { return null; }
+  };
+  const inline = function (parent, source, sourceDoc) {
+    // Cache failed delimiter searches so unfinished Markdown stays linear in input size.
+    let offset = 0, cursor = 0, lineEnd = source.indexOf("\n"), labelEnd = -2, hrefEnd = -2;
+    let noLinks = false, noLinkBefore = -1;
+    const flush = function (until) { parent.appendChild(document.createTextNode(source.slice(offset, until))); };
+    while (cursor < source.length) {
+      if (lineEnd >= 0 && cursor > lineEnd) lineEnd = source.indexOf("\n", cursor);
+      const boundary = lineEnd < 0 ? source.length : lineEnd;
+      if (source[cursor] === "`") {
+        const close = source.indexOf("`", cursor + 1);
+        if (close > cursor + 1 && close < boundary) {
+          flush(cursor); parent.appendChild(node("code", source.slice(cursor + 1, close)));
+          cursor = close + 1; offset = cursor; continue;
+        }
+      }
+      const image = source[cursor] === "!" && source[cursor + 1] === "[";
+      if (!noLinks && cursor > noLinkBefore && (source[cursor] === "[" || image)) {
+        const labelStart = cursor + (image ? 2 : 1);
+        if (labelEnd < labelStart) labelEnd = source.indexOf("](", labelStart);
+        if (labelEnd < 0) noLinks = true;
+        else if (labelEnd >= boundary) noLinkBefore = boundary;
+        else {
+          if (hrefEnd < labelEnd + 2) hrefEnd = source.indexOf(")", labelEnd + 2);
+          if (hrefEnd < 0) noLinks = true;
+          else if (hrefEnd >= boundary) noLinkBefore = boundary;
+          else {
+            flush(cursor);
+            const label = source.slice(labelStart, labelEnd), href = source.slice(labelEnd + 2, hrefEnd);
+            if (image) parent.appendChild(node("span", "[이미지: " + label + "]", "image-alt"));
+            else {
+              const target = resolvedLink(href, sourceDoc);
+              if (!target) parent.appendChild(document.createTextNode(source.slice(cursor, hrefEnd + 1)));
+              else {
+                const a = node("a", label);
+                if (target.url) { a.href = target.url; a.target = "_blank"; a.rel = "noopener noreferrer"; }
+                else { a.href = "#"; a.addEventListener("click", function (event) { event.preventDefault(); goDocument(target.doc, target.anchor); }); }
+                parent.appendChild(a);
+              }
+            }
+            cursor = hrefEnd + 1; offset = cursor; continue;
+          }
+        }
+      }
+      cursor += 1;
+    }
+    flush(source.length);
+  };
+  const markdown = function (target, source, doc, idPrefix, depth) {
+    const nesting = depth || 0;
+    if (nesting >= 32) {
+      target.appendChild(node("pre", text(source, ""), "raw-block"));
+      return;
+    }
+    const lines = text(source, "").split(/\r?\n/), indexed = new Map(headings(source).map(function (h) { return [h.line, h]; }));
+    let i = 0;
+    const startBlock = function (line) { return /^\s*$|^\s{0,3}(?:#{1,6}\s|`{3,}|~{3,}|>\s?|[-+*]\s|\d+[.)]\s)|^\s*\|/.test(line); };
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) { i += 1; continue; }
+      const fence = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (fence) {
+        const body = []; i += 1;
+        while (i < lines.length && !(new RegExp("^\\s{0,3}" + fence[1][0] + "{" + fence[1].length + ",}\\s*$")).test(lines[i])) body.push(lines[i++]);
+        if (i < lines.length) i += 1;
+        const pre = node("pre"); pre.appendChild(node("code", body.join("\n"))); target.appendChild(pre); continue;
+      }
+      if (indexed.has(i)) {
+        const heading = indexed.get(i), h = node("h" + heading.level);
+        h.id = idPrefix + heading.anchor; inline(h, heading.title, doc); target.appendChild(h); i += 1; continue;
+      }
+      if (/^\s*\|/.test(line)) {
+        const body = []; while (i < lines.length && lines[i].trim()) body.push(lines[i++]);
+        target.appendChild(node("pre", body.join("\n"), "raw-block")); continue;
+      }
+      if (/^\s{0,3}>/.test(line)) {
+        const body = []; while (i < lines.length && /^\s{0,3}>/.test(lines[i])) body.push(lines[i++].replace(/^\s{0,3}>\s?/, ""));
+        const quote = node("blockquote"); markdown(quote, body.join("\n"), doc, idPrefix + "quote-", nesting + 1); target.appendChild(quote); continue;
+      }
+      const list = line.match(/^\s{0,3}([-+*]|\d+[.)])\s+(.*)$/);
+      if (list) {
+        const ordered = /^\d/.test(list[1]), container = node(ordered ? "ol" : "ul");
+        if (ordered) container.start = parseInt(list[1], 10);
+        while (i < lines.length) {
+          const item = lines[i].match(/^\s{0,3}([-+*]|\d+[.)])\s+(.*)$/);
+          if (!item || /^\d/.test(item[1]) !== ordered) break;
+          const li = node("li"), check = item[2].match(/^\[([ xX])\]\s*(.*)$/);
+          inline(li, check ? (check[1] === " " ? "☐ " : "☑ ") + check[2] : item[2], doc); container.appendChild(li); i += 1;
+        }
+        target.appendChild(container); continue;
+      }
+      const body = [line]; i += 1;
+      while (i < lines.length && !startBlock(lines[i])) body.push(lines[i++]);
+      const paragraph = node("p"); inline(paragraph, body.join("\n"), doc); target.appendChild(paragraph);
+    }
+  };
+  const sectionText = function (doc, names) {
+    if (!doc || doc.status !== "present") return null;
+    const hs = headings(doc.text), found = hs.find(function (h) { return h.level === 2 && names.indexOf(h.title.toLocaleLowerCase()) >= 0; });
+    if (!found) return null;
+    const next = hs.find(function (h) { return h.line > found.line && h.level <= found.level; });
+    return text(doc.text, "").split(/\r?\n/).slice(found.line + 1, next ? next.line : undefined).join("\n");
+  };
+  const showSection = function (id, names) {
+    const target = $(id), plan = docsByKey.get("plan"), content = sectionText(plan, names); clear(target);
+    if (content === null) target.appendChild(node("p", "해당 섹션 없음 · 전체 계획 문서에서 확인하세요.", "empty-state"));
+    else if (!content.trim()) target.appendChild(node("p", "해당 섹션에 기재된 내용 없음", "empty-state"));
+    else markdown(target, content, plan, id + "-");
+  };
+  const entryLabel = function (entry) { const r = recordOf(entry); return text(r.title, "제목 미기록"); };
+  const row = function (entry, recent) {
+    const r = recordOf(entry), button = node("button", undefined, "entry-row"); button.type = "button";
+    button.setAttribute("aria-pressed", String(state.entry === entry.key));
+    button.appendChild(node("span", entryLabel(entry), "entry-title"));
+    const summary = text(r.summary, "요약 미기록");
+    button.appendChild(node("span", summary.length > 180 ? summary.slice(0, 180) + "…" : summary, "entry-summary"));
+    button.appendChild(node("span", text(r.createdAt) + " · " + text(r.type) + " · 기록 당시 로그", "entry-meta"));
+    button.addEventListener("click", function () { setState({tab:"timeline", entry:entry.key, page:recent ? 1 : state.page}); });
+    return button;
+  };
+  const renderOverview = function () {
+    showSection("current-state", ["current state", "현재 상태"]);
+    showSection("next-actions", ["next actions", "다음 행동"]);
+    const recent = $("recent-entries"); clear(recent);
+    entries.slice(0, 5).forEach(function (entry) { recent.appendChild(row(entry, true)); });
+    if (!entries.length) recent.appendChild(node("p", "아직 작업 기록이 없습니다.", "empty-state"));
+  };
+  const renderGit = function () {
+    const target = $("git-content"), git = model.git || {}; clear(target);
+    if (git.status !== "available") {
+      target.appendChild(node("p", git.status === "not_repository" ? "Git 관리 밖 · 생성 시점 Git 정보 없음" : "Git 조회 불가 · 아래 경고에서 원인을 확인하세요.")); return;
+    }
+    target.appendChild(node("p", "브랜치: " + text(git.branch, "확인 불가 / detached HEAD") + " · HEAD: " + text(git.head, "아직 커밋 없음")));
+    const changes = Array.isArray(git.changes) ? git.changes : [];
+    const details = node("details"), summary = node("summary", "생성 시점 변경 파일 " + changes.length + "개"); details.appendChild(summary);
+    const list = node("ul");
+    changes.forEach(function (change) { list.appendChild(node("li", text(change.status, "") + " " + text(change.path) + (typeof change.previousPath === "string" ? " ← " + change.previousPath : ""))); });
+    details.appendChild(list); target.appendChild(details);
+    target.appendChild(node("p", "로그의 dirty 값은 기록 당시 상태입니다. Git 조회는 작업 완료·현재 브랜치 포함·배포를 증명하지 않습니다.", "source-note"));
+  };
+  const renderWarnings = function () {
+    const warnings = Array.isArray(model.warnings) ? model.warnings : [], box = $("warnings"), list = $("warning-list");
+    const details = $("warnings-details"), panel = $("warnings-panel");
+    let page = 1;
+    box.hidden = warnings.length === 0;
+    $("warnings-summary").textContent = "확인이 필요한 내용 · 경고 " + warnings.length + "건";
+    const showPage = function () {
+      clear(list);
+      panel.hidden = !details.open;
+      if (!details.open) return;
+      const pages = Math.max(1, Math.ceil(warnings.length / 50));
+      page = Math.max(1, Math.min(page, pages));
+      warnings.slice((page - 1) * 50, page * 50).forEach(function (warning) {
+        list.appendChild(node("li", text(warning.message, "알 수 없는 경고") + (typeof warning.source === "string" ? " (" + warning.source + ")" : "")));
+      });
+      $("warning-page-status").textContent = page + " / " + pages + " 페이지 · 최대 50건";
+      $("warning-previous-page").disabled = page <= 1;
+      $("warning-next-page").disabled = page >= pages;
+    };
+    details.addEventListener("toggle", showPage);
+    $("warning-previous-page").addEventListener("click", function () { page -= 1; showPage(); });
+    $("warning-next-page").addEventListener("click", function () { page += 1; showPage(); });
+    showPage();
+  };
+  const renderDetail = function () {
+    const target = $("entry-detail"); clear(target);
+    const entry = byKey.get(state.entry);
+    if (!entry) { target.appendChild(node("h3", "작업 상세")); target.appendChild(node("p", "목록에서 작업을 선택하세요.", "empty-state")); return; }
+    const r = recordOf(entry); target.appendChild(node("h3", entryLabel(entry)));
+    target.appendChild(node("p", "기록 당시 로그 · 원문 보고이며 현재 검증 결과가 아닙니다.", "source-note"));
+    target.appendChild(node("p", text(r.summary, "요약 미기록")));
+    const dl = node("dl");
+    const add = function (label, value) { dl.appendChild(node("dt", label)); dl.appendChild(node("dd", value)); };
+    add("출처", text(entry.sourcePath) + ":" + entry.sourceLine);
+    add("기록 시각", text(r.createdAt) + (entry.timestampUtc === null ? " · 시간대/시각 미확인" : ""));
+    add("유형", text(r.type)); add("브랜치", text(r.branch));
+    add("조회한 커밋 참조", text(entry.commitObjectRef, text(r.commit)));
+    if (typeof r.commit === "string") add("기록된 commit", r.commit);
+    if (typeof r.fullCommit === "string") add("기록된 fullCommit", r.fullCommit);
+    const statusLabel = entry.commitObjectStatus === "verified" ? "기록의 참조 대상을 Git에서 확인" : (entry.commitObjectStatus === "not_recorded" ? "커밋 미확인" : "이 checkout에서 참조 대상을 확인할 수 없음");
+    add("참조 조회", statusLabel);
+    add("기록 당시 dirty", typeof r.dirty === "boolean" ? String(r.dirty) : "미기록");
+    target.appendChild(dl); target.appendChild(node("h4", "기록된 파일"));
+    const files = filesOf(entry), list = node("ul", undefined, "file-list");
+    files.forEach(function (file) {
+      const li = node("li"), button = node("button", file, "file-button"); button.type = "button";
+      button.addEventListener("click", function () { setState({file:file, page:1, tab:"timeline"}); }); li.appendChild(button); list.appendChild(li);
+    });
+    if (!files.length) target.appendChild(node("p", "파일 미기록", "muted")); else target.appendChild(list);
+    const raw = node("details"); raw.appendChild(node("summary", "원문 JSON 보기")); raw.appendChild(node("pre", typeof entry.recordText === "string" ? entry.recordText : JSON.stringify(entry.record, null, 2))); target.appendChild(raw);
+  };
+  const renderTimeline = function () {
+    $("search").value = state.q; $("type-filter").value = state.type; $("date-from").value = state.from;
+    $("date-to").value = state.to; $("file-filter").value = state.file;
+    const query = normalized(state.q), dateActive = !!(state.from || state.to);
+    filtered = entries.filter(function (entry) {
+      if (query && searchValues.get(entry.key).indexOf(query) < 0) return false;
+      if (state.type && recordOf(entry).type !== state.type) return false;
+      if (state.file && filesOf(entry).indexOf(state.file) < 0) return false;
+      if (dateActive) {
+        const day = localDate(entry.timestampUtc);
+        if (!day || (state.from && day < state.from) || (state.to && day > state.to)) return false;
+      }
+      return true;
+    });
+    const pages = Math.max(1, Math.ceil(filtered.length / 50)); state.page = Math.min(state.page, pages);
+    const visible = filtered.slice((state.page - 1) * 50, state.page * 50), list = $("entry-list"); clear(list);
+    visible.forEach(function (entry) { list.appendChild(row(entry, false)); });
+    if (!visible.length) list.appendChild(node("p", entries.length ? "조건에 맞는 작업 기록이 없습니다." : "아직 작업 기록이 없습니다.", "empty-state"));
+    $("result-count").textContent = "결과 " + filtered.length + "건 / 전체 " + entries.length + "건";
+    const unknown = entries.filter(function (entry) { return localDate(entry.timestampUtc) === null; }).length;
+    $("unknown-dates").textContent = "시각 미확인 " + unknown + "건" + (dateActive ? " · 날짜 필터에서 제외" : " · 날짜 필터 사용 시 제외");
+    $("page-status").textContent = state.page + " / " + pages + " 페이지 · 최대 50건";
+    $("previous-page").disabled = state.page <= 1; $("next-page").disabled = state.page >= pages;
+    renderDetail();
+  };
+  const renderDocument = function () {
+    $("document-select").value = state.doc;
+    const target = $("document-content"), doc = docsByKey.get(state.doc); clear(target);
+    if (!doc || doc.status !== "present") { target.appendChild(node("p", "기록 없음 · 이 문서가 아직 없습니다.", "empty-state")); return; }
+    target.appendChild(node("p", "문서 기재 · " + text(doc.path), "source-note"));
+    markdown(target, doc.text, doc, "doc-" + doc.key + "-");
+    if (state.anchor) {
+      const heading = $("doc-" + doc.key + "-" + state.anchor);
+      if (heading) heading.scrollIntoView({block:"start"});
+    }
+  };
+  // Unified search normalizes lazily and reuses the collected model's ordering.
+  const contextFold = value => value.normalize("NFC").replace(/[A-Z]/g, c => c.toLowerCase());
+  const contextTerms = query => {
+    if (query.length>512 || Array.from(query).length>256 || query.includes("\u0000")) throw Error("검색어는 유효한 UTF-8의 1~256자여야 합니다.");
+    try { encodeURIComponent(query); } catch (_) { throw Error("검색어는 유효한 UTF-8의 1~256자여야 합니다."); }
+    const terms = contextFold(query).split(/[ \t\r\n\f\v]+/).filter(Boolean);
+    if (!terms.length || terms.length > 16) throw Error("검색어를 1~16개 입력하세요. 최대 256자입니다.");
+    return Array.from(new Set(terms));
+  };
+  let contextUnits = null, contextCache = null, contextTimer = null, contextComposing = false;
+  const getContextUnits = () => {
+    if (contextUnits) return contextUnits;
+    const units = documents.filter(doc => doc.status === "present").map(doc => ({ref:"document:"+doc.key, kind:"document", title:doc.path, paths:[doc.path], body:doc.text, path:doc.path, doc}));
+    (model.entries || []).forEach(entry => {
+      const r=recordOf(entry);
+      units.push({ref:"entry:"+entry.key, kind:"work_log", title:text(r.title,""), paths:filesOf(entry), body:text(r.summary,""), path:entry.sourcePath, entry});
+    });
+    units.forEach((u,i) => { u.order=i; u.foldTitle=u.kind === "work_log" ? contextFold(u.title) : ""; u.foldPaths=u.paths.map(contextFold); u.foldBody=contextFold(u.body); });
+    contextUnits=units; return units;
+  };
+  const contextHits = (query,scope) => {
+    if (contextCache && contextCache.query === query && contextCache.scope === scope) return contextCache;
+    const terms=contextTerms(query), wanted={all:null,documents:"document",logs:"work_log"}[scope];
+    const hits=[];
+    getContextUnits().forEach(u => {
+      if (wanted && u.kind !== wanted) return;
+      if (!terms.every(t => u.foldTitle.includes(t) || u.foldBody.includes(t) || u.foldPaths.some(p=>p.includes(t)))) return;
+      const score=terms.reduce((n,t)=>n+4*Number(u.foldTitle.includes(t))+2*Number(u.foldPaths.some(p=>p.includes(t)))+Number(u.foldBody.includes(t)),0);
+      hits.push({unit:u,score});
+    });
+    hits.sort((a,b)=>b.score-a.score || a.unit.order-b.unit.order);
+    contextCache={query,scope,terms,hits}; return contextCache;
+  };
+  const contextSnippet = (value,terms) => {
+    const display=value.normalize("NFC"), folded=contextFold(display);
+    const positions=terms.map(t=>folded.indexOf(t)).filter(i=>i>=0);
+    const position=positions.length ? Math.min.apply(null,positions) : 0;
+    let start=position, end;
+    for(let count=0; count<40 && start>0; count++) { start--; if(start>0 && /[\uDC00-\uDFFF]/.test(display[start]) && /[\uD800-\uDBFF]/.test(display[start-1])) start--; }
+    end=start;
+    for(let count=0;count<158 && end<display.length;count++) end+=display.codePointAt(end)>0xffff ? 2 : 1;
+    return {snippet:(start ? "…" : "")+display.slice(start,end)+(end<display.length ? "…" : ""), snippetTruncatedStart:start>0, snippetTruncatedEnd:end<display.length};
+  };
+  const contextResult = (hit,terms) => {
+    if (hit.result) return hit.result;
+    const u=hit.unit, fields=[];
+    if(u.kind === "work_log" && terms.some(t=>u.foldTitle.includes(t))) fields.push("title");
+    if(terms.some(t=>u.foldPaths.some(p=>p.includes(t)))) fields.push("path");
+    if(terms.some(t=>u.foldBody.includes(t))) fields.push(u.kind === "document" ? "body" : "summary");
+    let line=null, value=u.path, field="path";
+    if(u.kind === "document") {
+      const lines=u.body.split("\n");
+      for(let i=0;i<lines.length;i++) {
+        const folded=contextFold(lines[i]);
+        if(terms.some(t=>folded.includes(t))) { line=i+1; value=lines[i].replace(/\r$/,""); field="body"; break; }
+      }
+    } else {
+      line=u.entry.sourceLine;
+      const candidates=[["summary",u.body],["title",u.title]].concat(u.paths.map(p=>["files",p]));
+      for(const [name,content] of candidates) {
+        const found=content.split("\n").find(part=>{const folded=contextFold(part);return terms.some(t=>folded.includes(t));});
+        if(found !== undefined) {value=found;field=name;break;}
+      }
+    }
+    const manifest=(model.sourceManifest || []).find(row=>row.root === "context" && row.path === u.path);
+    hit.result = Object.assign({ref:u.ref,kind:u.kind,title:u.title || null,score:hit.score,source:{root:"context",path:u.path,startLine:line,endLine:line,sha256:manifest ? manifest.sha256 : null},matchedFields:fields,snippetField:field}, contextSnippet(value,terms));
+    return hit.result;
+  };
+  const highlight = (target,value,terms) => {
+    value=value.normalize("NFC");
+    const folded=contextFold(value), ranges=[];
+    terms.forEach(term=>{let i=0;while((i=folded.indexOf(term,i))>=0){ranges.push([i,i+term.length]);i+=Math.max(1,term.length);}});
+    ranges.sort((a,b)=>a[0]-b[0]); const merged=[];
+    ranges.forEach(r=>{const last=merged[merged.length-1];if(last && r[0]<=last[1]) last[1]=Math.max(last[1],r[1]);else merged.push(r.slice());});
+    let offset=0;
+    merged.forEach(r=>{target.appendChild(document.createTextNode(value.slice(offset,r[0])));target.appendChild(node("mark",value.slice(r[0],r[1])));offset=r[1];});
+    target.appendChild(document.createTextNode(value.slice(offset)));
+  };
+  const goContextResult = (hit,result) => {
+    if (contextTimer !== null) { clearTimeout(contextTimer); contextTimer=null; }
+    writeHash();
+    if(hit.unit.kind === "document") {
+      const hs=docHeadings.get(hit.unit.doc.key)||[];
+      const before=result.source.startLine === null ? [] : hs.filter(h=>h.line<result.source.startLine);
+      Object.assign(state,{tab:"documents",doc:hit.unit.doc.key,anchor:before.length ? before[before.length-1].anchor : ""});
+    } else Object.assign(state,{tab:"timeline",q:"",type:"",from:"",to:"",file:"",entry:hit.unit.entry.key,page:1});
+    render(); writeHash(true);
+  };
+  const renderContextSearch = () => {
+    $("context-search-query").value=state.sq; $("context-search-scope").value=state.ss;
+    const target=$("context-search-results");clear(target);
+    if (!state.sq) {
+      $("context-search-status").textContent="검색어를 입력하세요. 예: timeout cache";
+      $("context-search-page").textContent="";
+      $("context-search-previous").disabled=true;$("context-search-next").disabled=true;return;
+    }
+    let found;
+    try {found=contextHits(state.sq,state.ss);} catch(error) {
+      $("context-search-status").textContent=error.message; $("context-search-page").textContent="";
+      $("context-search-previous").disabled=true;$("context-search-next").disabled=true;return;
+    }
+    const pages=Math.max(1,Math.ceil(found.hits.length/50));state.sp=Math.min(state.sp,pages);
+    found.hits.slice((state.sp-1)*50,state.sp*50).forEach(hit=>{
+      const result=contextResult(hit,found.terms), button=node("button",undefined,"context-result");button.type="button";
+      const rawTitle=result.title || "제목 미기록";
+      const titlePreview=rawTitle.length>160 ? contextSnippet(rawTitle,found.terms).snippet : rawTitle;
+      const title=node("strong");highlight(title,titlePreview,found.terms);button.appendChild(title);
+      const snippet=node("span");highlight(snippet,result.snippet,found.terms);button.appendChild(snippet);
+      button.appendChild(node("span",JSON.stringify(result.source),"source-note"));
+      button.addEventListener("click",()=>goContextResult(hit,result));target.appendChild(button);
+    });
+    if(!found.hits.length) target.appendChild(node("p","일치하는 문서나 작업 기록이 없습니다.","empty-state"));
+    $("context-search-status").textContent="결과 "+found.hits.length+"건 · 키워드 AND · 스냅샷 한정 출처";
+    $("context-search-page").textContent=state.sp+" / "+pages+" 페이지 · 최대 50건";
+    $("context-search-previous").disabled=state.sp<=1;$("context-search-next").disabled=state.sp>=pages;
+  };
+  const renderHandoff = () => {
+    const h=model.handoff || {status:"incomplete",text:""};
+    $("handoff-text").value=h.text;$("handoff-text").readOnly=true;$("handoff-copy").disabled=!h.text;
+    $("handoff-status").textContent=h.status === "budget_exceeded" ? "기본 예산 초과: "+h.error+" · CLI --max-chars를 조절하세요." : (h.status === "complete" ? "필수 섹션 기재됨" : "필수 섹션 누락/구조 모호")+" · 실행·변경 승인이 아닙니다.";
+  };
+  const bindContextControls = () => {
+    const query=$("context-search-query");
+    const submit=()=>{if(contextTimer !== null){clearTimeout(contextTimer);contextTimer=null;}setState({sq:query.value,sp:1});};
+    query.addEventListener("compositionstart",()=>{contextComposing=true;if(contextTimer !== null) clearTimeout(contextTimer);contextTimer=null;});
+    query.addEventListener("compositionend",()=>{contextComposing=false;submit();});
+    query.addEventListener("input",event=>{if(contextComposing || event.isComposing)return;if(contextTimer !== null)clearTimeout(contextTimer);contextTimer=setTimeout(submit,150);});
+    query.addEventListener("keydown",event=>{if(event.key === "Enter" && !contextComposing && !event.isComposing){event.preventDefault();submit();}});
+    $("context-search-scope").addEventListener("change",()=>{if(contextTimer !== null){clearTimeout(contextTimer);contextTimer=null;}setState({sq:query.value,ss:$("context-search-scope").value,sp:1});});
+    $("context-search-previous").addEventListener("click",()=>setState({sp:Math.max(1,state.sp-1)}));
+    $("context-search-next").addEventListener("click",()=>setState({sp:state.sp+1}));
+    $("handoff-copy").addEventListener("click",()=>{
+      const target=$("handoff-text"), fallback=()=>{target.focus();target.select();$("handoff-status").textContent="자동 복사를 사용할 수 없습니다. 선택한 텍스트를 수동 복사하세요 (⌘C / Ctrl+C).";};
+      try {if(typeof navigator === "undefined" || !navigator.clipboard || !navigator.clipboard.writeText){fallback();return;}
+        Promise.resolve(navigator.clipboard.writeText(target.value)).then(()=>{$("handoff-status").textContent="인수인계 내용을 복사했습니다. 원문·누락 사항을 확인하세요.";},fallback);
+      }catch(_){fallback();}
+    });
+  };
+
+  const render = function () {
+    ["overview", "timeline", "documents", "context-search", "handoff"].forEach(function (tab) {
+      $("view-" + tab).hidden = state.tab !== tab;
+      const button = $("nav-" + tab); if (state.tab === tab) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+    });
+    if (state.tab === "overview") renderOverview();
+    if (state.tab === "timeline") renderTimeline();
+    if (state.tab === "documents") renderDocument();
+    if (state.tab === "context-search") renderContextSearch();
+    if (state.tab === "handoff") renderHandoff();
+  };
+  $("project-name").textContent = text((model.project || {}).name, "Context viewer");
+  $("context-path").textContent = "조회 범위: " + text((model.project || {}).contextPath, "") + " · 허용 문서와 활성·보관 작업 기록";
+  $("generated-at").textContent = "생성 시각: " + text(model.generatedAt);
+  const updateAge = function () {
+    const generated = Date.parse(model.generatedAt), elapsed = Math.max(0, Date.now() - generated);
+    $("snapshot-age").textContent = Number.isFinite(generated) ? "생성 후 약 " + Math.floor(elapsed / 60000) + "분 경과 · 원본 변경 여부는 감지하지 않습니다." : "생성 시각 확인 불가";
+  };
+  updateAge(); setInterval(updateAge, 60000);
+  const addOptions = function (target, values) { values.forEach(function (value) { const option = node("option", value); option.value = value; target.appendChild(option); }); };
+  addOptions($("type-filter"), typeValues); addOptions($("file-filter"), fileValues);
+  documents.forEach(function (doc) { const option = node("option", (labels[doc.key] || doc.key) + (doc.status === "present" ? "" : " · 기록 없음")); option.value = doc.key; $("document-select").appendChild(option); });
+  ["overview", "timeline", "documents", "context-search", "handoff"].forEach(function (tab) { $("nav-" + tab).addEventListener("click", function () { setState({tab:tab}); }); });
+  ["open-plan-current", "open-plan-next"].forEach(function (id) { $(id).addEventListener("click", function () { goDocument("plan", ""); }); });
+  $("search").addEventListener("compositionstart", function () { composing = true; });
+  $("search").addEventListener("compositionend", function () { composing = false; setState({q:$("search").value, page:1}); });
+  $("search").addEventListener("input", function (event) { if (!composing && !event.isComposing) setState({q:$("search").value, page:1}); });
+  [["type-filter", "type"], ["file-filter", "file"], ["date-from", "from"], ["date-to", "to"]].forEach(function (pair) {
+    $(pair[0]).addEventListener("change", function () { const changes = {page:1}; changes[pair[1]] = $(pair[0]).value; setState(changes); });
+  });
+  $("clear-filters").addEventListener("click", function () { setState({q:"", type:"", from:"", to:"", file:"", entry:"", page:1}); });
+  $("previous-page").addEventListener("click", function () { setState({page:Math.max(1, state.page - 1)}); });
+  $("next-page").addEventListener("click", function () { setState({page:state.page + 1}); });
+  $("document-select").addEventListener("change", function () { setState({doc:$("document-select").value, anchor:""}); });
+  const restoreHash = function () {
+    if (contextTimer !== null) { clearTimeout(contextTimer); contextTimer=null; }
+    state=readHash(); render();
+  };
+  window.addEventListener("hashchange", restoreHash);
+  $("skip-main").addEventListener("click", function (event) { event.preventDefault(); $("main-content").focus(); });
+  window.addEventListener("popstate", restoreHash);
+  bindContextControls();
+  renderGit(); renderWarnings(); render();
+}());
+</script>
+</body>
+</html>
