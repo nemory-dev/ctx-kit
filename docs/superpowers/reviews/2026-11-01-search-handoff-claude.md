@@ -1,11 +1,8 @@
 # 통합 검색·근거 있는 인수인계: Claude 검토와 결정
 
 - 검토일: 2026-11-01, Asia/Seoul.
-- 사용자 승인: 조사·계획을 문서화하고 Claude와 논의해 구체화. 구현·commit·push·PR 승인은 없음.
-- 사용 절차: [cross-review SKILL.md](/Users/hyun/.codex/skills/cross-review/SKILL.md). 요청은 세션 전용 임시 bridge store에 저장하고 실제 Claude Code CLI로 전달했다.
-- 실행: CLI 기본 모델, --safe-mode, --tools '', --disable-slash-commands, --strict-mcp-config + 빈 MCP 설정, --no-session-persistence, --no-chrome, 별도 임시 cwd. 설치·코드 실행/읽기·편집 도구를 제공하지 않았다.
-- 전달 범위: 직접 작성한 설계 문서와 검토 질문. 사용자 컨텍스트·contracts·저장소 전체는 전달하지 않았다.
-- 1차 review ID: `9e072a9d-711c-492f-8eb3-f2d4c433d3e0`, bridge 상태 completed. 실제 CLI 종료0/is_error=false/응답1개.
+- 검토 방식: 작성한 설계 문서와 질문을 Claude Code CLI에 전달했다. 코드 읽기·실행·편집 도구를 제공하지 않은 설계 제안 검토다.
+- 전달 범위: 직접 작성한 설계 문서와 검토 질문으로 한정했다.
 - 모델 식별자는 응답 최상위에 없어 특정 모델명을 주장하지 않는다.
 - 한계: Claude는 제공된 제안만 검토했다. 실제 코드 대조와 채택 판단은 Codex가 수행했다. 아래 1차 본문은 result 원문을 보존한다.
 

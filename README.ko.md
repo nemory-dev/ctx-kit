@@ -1,12 +1,23 @@
-# ctx-kit
+# ctx-kit — AI 코딩 에이전트를 위한 프로젝트 컨텍스트
 
 AI 코딩 에이전트가 바뀌어도 프로젝트의 결정, 진행 상황, 다음 행동을 이어가는 로컬 CLI.
 
-[English](README.md) · [시작하기](docs/ko/getting-started.md) · [설정](docs/ko/configuration.md) · [사용 흐름](docs/ko/workflows.md) · [문제 해결](docs/ko/troubleshooting.md) · [기여하기](CONTRIBUTING.ko.md)
+[English](README.md) · [시작하기](docs/ko/getting-started.md) · [설정](docs/ko/configuration.md) · [사용 흐름](docs/ko/workflows.md) · [문제 해결](docs/ko/troubleshooting.md) · [기여하기](CONTRIBUTING.ko.md) · [MIT 라이선스](LICENSE)
 
 ctx-kit은 Bash와 Python 표준 라이브러리로 동작합니다. 편집 가능한 프로젝트 컨텍스트를 만들고, 에이전트의 지침 파일 경로를 하나의 규칙 파일에 연결하며, 작업 단위를 로컬 JSONL 타임라인에 기록합니다. LLM API를 호출하지 않으며 API 키나 서버가 필요하지 않습니다.
 
 새 세션에서 **어떤 결정을 했고, 무엇이 바뀌었으며, 무엇을 검증했고, 다음에 무엇을 해야 하는지** 이어가고 싶을 때 사용합니다. 도구 사이에 파일을 공유하는 방식이며, 에이전트가 그 내용을 읽고 따라야 합니다.
+
+## 기여를 환영합니다
+
+유료 AI 도구나 저장소 쓰기 권한 없이도 참여할 수 있습니다. 한국어·영어 이슈, 문서 개선, 재현 가능한 버그 제보, 회귀 테스트, 플랫폼별 테스트 결과를 환영합니다.
+
+- **CLI 사용해 보기:** 아래의 새 데모 디렉터리 절차와 [시작하기](docs/ko/getting-started.md)를 따릅니다.
+- **문제 제보·변경 제안:** [이슈 양식](https://github.com/nemory-dev/ctx-kit/issues/new/choose)에 작은 합성 예제를 함께 적습니다.
+- **첫 기여:** [작은 기여 아이디어와 fork·PR 절차](CONTRIBUTING.ko.md)를 참고하세요. 모든 PR은 두 필수 CI 검사를 거칩니다.
+- **보안·개인정보 문제:** 상세를 공개하기 전에 [SECURITY.md](SECURITY.md)의 제보 절차를 따릅니다.
+
+[행동 강령](CODE_OF_CONDUCT.md)을 지켜 주세요. 자격 증명·개인 정보·비공개 프로젝트 컨텍스트는 기여 내용에 포함하지 않습니다.
 
 ## 빠른 시작
 
@@ -163,4 +174,4 @@ PR에는 최신 `main` 변경이 반영되어야 합니다. `main` 강제 푸시
 
 ## 라이선스
 
-MIT
+[MIT](LICENSE). 기여에는 저장소의 라이선스가 적용됩니다. 권한을 가지고 기여하는 제3자 자료의 저작권·라이선스 고지는 보존하세요.

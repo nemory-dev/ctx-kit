@@ -4,13 +4,37 @@
 
 Use this guide to change the ctx-kit repository, validate the change, and take it through a PR and merge. To install ctx-kit in another project, use [Getting started](docs/en/getting-started.md).
 
+## Start with a small contribution
+
+English and Korean are welcome. You do not need a paid AI tool or upstream write access. Useful first contributions include:
+
+- Clarifying an installation or recovery step with an example you have checked.
+- Reporting a CLI or viewer problem with minimal synthetic input and exact reproduction steps.
+- Adding a regression case for file paths, Unicode, interrupted writes, or other behavior covered by the current CLI.
+- Reporting a platform or browser check with the tested commit, environment, result, and untested cases clearly separated.
+
+Use the [issue templates](https://github.com/nemory-dev/ctx-kit/issues/new/choose) for bug reports and proposals. Discuss a large refactor, public API, storage format, dependency, or CI change before implementing it. AI-assisted contributions are welcome when you understand the change and verify its claims; do not include private prompts or conversations.
+
+Follow the [code of conduct](CODE_OF_CONDUCT.md). Security and privacy reports use [SECURITY.md](SECURITY.md). Review [publication hygiene](docs/maintainers/publication.md) before sharing logs or patches, including your Git author identity. Contributions use the existing [MIT license](LICENSE); preserve notices for third-party material.
+
 ## Prerequisites
 
 - Bash, standard Unix tools, and Git. Use macOS or Linux for the steps below.
 - Python **3.11** to match CI. The tests need only the standard library.
+- Node.js is optional for the embedded JavaScript DOM harnesses. If it is unavailable, record the skipped tests rather than claiming browser behavior was checked. These harnesses do not test a real browser.
 - A GitHub account. The [GitHub CLI](https://cli.github.com/manual/) is optional if you use GitHub's web UI for PRs, checks, and merges. CLI examples assume `gh auth status` succeeds.
 
 Run commands from the repository root. Tests create temporary projects; you do not need to run `ctx.sh init` in this checkout.
+
+## Repository map
+
+| Path | Responsibility |
+| --- | --- |
+| `ctx.sh` | Standalone CLI, embedded Python reader/storage code, and offline HTML/CSS/JS |
+| `AGENT_RULES.md` | Rules source that must stay aligned with the embedded initialization template |
+| `tests/test_*.py` | Standard-library regression tests using temporary copied installations |
+| `tests/fixtures/` | Synthetic inputs and optional Node DOM harnesses |
+| `docs/en/`, `docs/ko/` | Paired user guides |
 
 ## CI and main protection
 
@@ -23,7 +47,7 @@ Run commands from the repository root. Tests create temporary projects; you do n
 
 Both jobs must succeed. One job failing does not cancel the other, and each has a 10-minute timeout. Tool versions are printed in the logs; `-latest` runner images can change over time. Windows is outside this CI matrix.
 
-The upstream repository's `main` policy, verified on **2026-10-25**, requires:
+The upstream repository's `main` policy, verified on **2026-11-02**, requires:
 
 - A PR for every change, including administrator changes; no PR bypass is configured.
 - Both check names above, provided by GitHub Actions, with the latest `main` changes included before merging.
@@ -57,7 +81,7 @@ git status --short
 git fetch "$BASE_REMOTE"
 git switch main
 git merge --ff-only "${BASE_REMOTE}/main"
-git switch -c codex/my-change
+git switch -c contrib/my-change
 ```
 
 If switching or fast-forwarding fails, inspect the reported local work or diverged history before continuing. Preserve existing files and unfinished work.
@@ -93,11 +117,11 @@ Replace that file list and message with your actual change. Check the staged dif
 Use the link printed by `git push` or [create a PR with GitHub CLI](https://cli.github.com/manual/gh_pr_create):
 
 ```bash
-PR_SOURCE=codex/my-change
+PR_SOURCE=contrib/my-change
 gh pr create --repo nemory-dev/ctx-kit --base main --head "$PR_SOURCE"
 ```
 
-For a fork, set `PR_SOURCE` to `YOUR_LOGIN:codex/my-change`, replacing `YOUR_LOGIN` with the fork owner's GitHub login. The command asks for a title and body, then prints the PR URL. Describe the problem, resulting behavior, validation performed, and remaining limitations.
+For a fork, set `PR_SOURCE` to `YOUR_LOGIN:contrib/my-change`, replacing `YOUR_LOGIN` with the fork owner's GitHub login. The command asks for a title and body, then prints the PR URL. Describe the problem, resulting behavior, validation performed, and remaining limitations.
 
 ## 5. Check the PR and handle main updates
 
@@ -157,8 +181,8 @@ After the PR is merged and the `main` push CI succeeds, return to a working tree
 git fetch "$BASE_REMOTE"
 git switch main
 git merge --ff-only "${BASE_REMOTE}/main"
-git branch -d codex/my-change
-git push origin --delete codex/my-change
+git branch -d contrib/my-change
+git push origin --delete contrib/my-change
 git status --short
 ```
 
