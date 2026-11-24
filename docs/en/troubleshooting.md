@@ -210,7 +210,7 @@ PY
 bash ctx.sh timeline --limit 20 --json
 ```
 
-Object syntax is not a full validation of every record field. `timeline` may report a traceback for malformed data; `export` propagates that failure. Run `timeline --json` directly to diagnose the active log.
+Object syntax is not a full validation of every record field. For malformed JSONL or non-object rows, `timeline` reports the file path and line number on stderr and exits with an error; `export` propagates that failure. Non-string field values remain unchanged in JSON output and are rendered as JSON in text output. Run `timeline --json` directly to diagnose the active log.
 
 `Refusing to replace non-regular file`, `Permission denied`, or an I/O error requires inspecting the exact path, permissions, and available storage. A directory or symlink at a log/destination path is intentionally not replaced by the atomic writer. Preserve it and resolve the file-type conflict deliberately. Do not make the entire project world-writable.
 
