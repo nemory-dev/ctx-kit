@@ -69,7 +69,7 @@ class HookIndexTests(unittest.TestCase):
         entries = [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["files"], ["app.txt"])
-        self.assertEqual(entries[0]["commit"], "pending")
+        self.assertEqual(entries[0]["fullCommit"], self.git("rev-parse", "HEAD").strip())
         self.assertNotEqual(
             self.git("-C", str(self.context), "rev-parse", "HEAD").strip(),
             self.context_head,
@@ -105,6 +105,17 @@ class HookIndexTests(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", ":other.txt"), other_blob)
         self.assertEqual(self.git("diff", "--cached", "--name-only").splitlines(), ["other.txt"])
         self.assert_isolated_snapshot()
+        self.assertTrue(json.loads(self.log.read_text())["dirty"])
+
+    def test_partial_staging_keeps_worktree_changes_and_reports_dirty_state(self):
+        (self.project / "app.txt").write_text("staged part\n")
+        self.git("add", "app.txt")
+        (self.project / "app.txt").write_text("staged part\nunstaged part\n")
+        self.git("commit", "--quiet", "-m", "partial staging")
+        self.assertEqual(self.git("show", "HEAD:app.txt"), "staged part\n")
+        self.assertEqual((self.project / "app.txt").read_text(), "staged part\nunstaged part\n")
+        self.assert_isolated_snapshot()
+        self.assertTrue(json.loads(self.log.read_text())["dirty"])
 
     def test_explicit_parent_git_directory_does_not_redirect_context_git(self):
         (self.project / "app.txt").write_text("app explicit repository\n", encoding="utf-8")

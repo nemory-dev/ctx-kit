@@ -78,7 +78,7 @@
 | `source` | 문자열 | 배포 값: `sample-context/AGENT_RULES.md`. 생략하지 않습니다. | `sync`가 사용하는 공유 규칙 파일입니다. 상위 디렉터리는 `init`, `status`, `export`, `log`, `timeline`, `backfill`, `archive`, hook 작업이 사용하는 컨텍스트 디렉터리이기도 합니다. |
 | `git_sync` | 객체 | 배포 설정은 `enabled: true`, `auto_log: true`입니다. 객체가 없으면 hook 상태 조회·실행 시 `{}`로 읽습니다. | 선택적으로 설치하는 관리형 Git hook의 설정입니다. JSON 값만 바꿔서는 hook이 설치되지 않습니다. |
 | `git_sync.enabled` | 불리언 | 배포 값: `true`. 실행 시 필드가 없으면 `false`. | 설치된 hook이 컨텍스트 자동 로그·로컬 커밋을 실행하도록 허용합니다. `false`이면 해당 작업 없이 hook 호출을 종료합니다. |
-| `git_sync.auto_log` | 불리언 | 배포 값: `true`. 실행 시 필드가 없으면 `false`. | 설치된 hook이 `enabled: true`로 실행될 때 메인 커밋 전에 스테이징된 파일 정보와 diff 통계를 기록합니다. LLM 호출이나 코드 의미 요약은 하지 않습니다. |
+| `git_sync.auto_log` | 불리언 | 배포 값: `true`. 실행 시 필드가 없으면 `false`. | 설치된 hook이 `enabled: true`로 실행될 때 post-commit에서 성공한 커밋의 ID·작성자 날짜·메시지·파일 목록을 기록합니다. backfill과 builder 및 활성·보관 전체 커밋 ID 중복 검사를 공유합니다. |
 | `generate` | 객체 | 배포 설정에 `project` 타입이 있습니다. 섹션이 없으면 `generate`가 실패합니다. | 타입 이름과 번들 정의를 연결합니다. 이름은 `generate <type>`에 전달하는 정확한 값이며 대소문자를 구분합니다. |
 | `generate.<type>.output` | 문자열 | 배포 `project` 값: `sample-context/generated/project-raw.md`. 값이 없거나 비어 있으면 `generate`가 실패합니다. | 수집 성공 후 교체하는 파일이며 기존 권한을 유지합니다. 필요한 상위 디렉터리는 생성합니다. `source`를 바꿔도 이 경로는 바뀌지 않습니다. 출력이 심볼릭 링크이거나 일반 파일이 아니면 거부합니다. |
 | `generate.<type>.collect` | 문자열 배열 | 배포 `project` 값: README, `docs` 아래 Markdown, `src` 아래 파일. 필드가 없으면 빈 배열로 처리합니다. | 프로젝트 상대 파일 경로나 Python glob 패턴입니다. 각 패턴 안에서 일치한 경로를 정렬하고, 패턴 순서대로 이어 붙입니다. 일치하지 않는 항목과 출력 파일의 별칭은 건너뜁니다. 남은 입력이 없으면 실패하며 기존 출력을 보존합니다. |
@@ -192,9 +192,9 @@ bash ctx.sh generate project
 
 ## 선택적인 Git 설정
 
-복사한 배포 설정의 두 Git 값은 모두 `true`이지만, 커밋 직전 동작에 영향을 주려면 관리형 hook도 설치되어 있어야 합니다. 수동 설정에서는 두 값을 `false`로 유지하고 `--no-hook --no-backfill`로 초기화합니다.
+복사한 배포 설정의 두 Git 값은 모두 `true`이지만, 성공 커밋 기록을 실행하려면 관리형 hook도 설치되어 있어야 합니다. 수동 설정에서는 두 값을 `false`로 유지하고 `--no-hook --no-backfill`로 초기화합니다.
 
-`hook install`은 `git_sync.enabled`를 `true`로 설정합니다. `auto_log`는 필드가 없을 때만 `true`로 설정하므로 명시적인 `false`는 유지합니다. 또한 hook 설치, 필요한 경우 컨텍스트 Git 제외 설정, 별도 로컬 컨텍스트 저장소 초기화를 수행합니다. 사용을 선택하기 전에 [작업 흐름](workflows.md)을 확인하세요. `hook uninstall`은 보관한 원본 훅을 복원하고, 원본이 없었다면 관리형 wrapper를 제거한 뒤 `enabled`를 `false`로 설정합니다. 로컬 컨텍스트 저장소나 제외 규칙은 제거하지 않습니다. wrapper 수정, 백업 충돌, 필수 백업 누락이 감지되면 훅 파일을 덮어쓰지 않고 오류를 반환합니다.
+`hook install`은 `git_sync.enabled`를 `true`로 설정합니다. `auto_log`는 필드가 없을 때만 `true`로 설정하므로 명시적인 `false`는 유지합니다. 또한 pre-commit·post-commit hook 설치, 필요한 경우 컨텍스트 Git 제외 설정, 별도 로컬 컨텍스트 저장소 초기화를 수행합니다. 사용을 선택하기 전에 [작업 흐름](workflows.md)을 확인하세요. `hook uninstall`은 보관한 원본 훅을 복원하고, 원본이 없었다면 관리형 wrapper를 제거한 뒤 `enabled`를 `false`로 설정합니다. 로컬 컨텍스트 저장소나 제외 규칙은 제거하지 않습니다. wrapper 수정, 백업 충돌, 필수 백업 누락이 감지되면 훅 파일을 덮어쓰지 않고 오류를 반환합니다.
 
 ## 설정 검증과 반영
 

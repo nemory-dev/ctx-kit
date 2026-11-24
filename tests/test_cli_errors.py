@@ -176,6 +176,62 @@ class CliErrorTests(unittest.TestCase):
                 entries = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines()]
                 self.assertEqual(entries[-1]["summary"], expected)
 
+    def test_missing_option_values_report_errors_without_changes(self):
+        options = {
+            "log": ("--summary", "--title", "--commit", "--files", "--type"),
+            "timeline": ("--limit", "--commit"),
+            "backfill": ("--limit", "--type"),
+            "archive": ("--keep",),
+            "view": ("--output",),
+        }
+        for command, names in options.items():
+            for name in names:
+                with self.subTest(command=command, option=name):
+                    result = self.assert_rejected_without_changes((command, name), name)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertEqual(result.stdout, "")
+
+    def test_usage_errors_are_written_to_stderr(self):
+        for args in (("log",), ("timeline", "--bogus"), ("backfill", "--bogus"),
+                     ("archive", "--bogus"), ("hook", "--bogus"), ("generate",)):
+            with self.subTest(args=args):
+                result = self.assert_rejected_without_changes(args)
+                self.assertEqual(result.stdout, "")
+
+    def test_timeline_corruption_reports_source_line_without_traceback(self):
+        timeline = self.context / "work-log/timeline.jsonl"
+        timeline.parent.mkdir()
+        nested = '{"summary":' + '[' * 20000 + '0' + ']' * 20000 + '}\n'
+        for index, content in enumerate(('{}\n\n{broken\n', '{}\n\n[]\n', '{}\n\n' + nested)):
+            with self.subTest(case=index):
+                timeline.write_text(content, encoding="utf-8")
+                for args in (("timeline",), ("timeline", "--json")):
+                    result = self.assert_rejected_without_changes(args, "line 3")
+                    self.assertEqual(result.stdout, "")
+                    self.assertNotIn("Traceback", result.stderr)
+
+    def test_timeline_preserves_non_string_fields_and_filters_strings_only(self):
+        row = {"createdAt": 17, "commit": [], "fullCommit": {"oid": "abc"},
+               "title": {"nested": True}, "summary": ["one", "two"],
+               "branch": ["topic"], "files": ["a", 17, None, {"x": 1}]}
+        normal = {"commit": None, "fullCommit": "abc123", "summary": False,
+                  "createdAt": None, "files": {"path": "a"}, "branch": False}
+        timeline = self.context / "work-log/timeline.jsonl"
+        timeline.parent.mkdir()
+        timeline.write_text("".join(json.dumps(r) + "\n" for r in (row, normal)))
+        before = self.snapshot()
+        result = self.run_ctx("timeline")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('["one", "two"]', result.stdout)
+        self.assertIn('"nested": true', result.stdout)
+        self.assertIn("null", result.stdout)
+        self.assertIn("(false)", result.stdout)
+        self.assertEqual(json.loads(self.run_ctx("timeline", "--json").stdout), [normal, row])
+        filtered = self.run_ctx("timeline", "--commit", "abc", "--json")
+        self.assertEqual(filtered.returncode, 0, filtered.stderr)
+        self.assertEqual(json.loads(filtered.stdout), [normal])
+        self.assertEqual(self.snapshot(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

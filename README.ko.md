@@ -107,7 +107,7 @@ project/
 | `bash ctx.sh archive --keep 30` | 완료 작업, 폐기된 결정, 오래된 로그 보관 |
 | `bash ctx.sh export` | 검토 후 수동 공유할 컨텍스트 출력 |
 | `bash ctx.sh generate project` | `generate.project.collect`로 지정한 파일 결합 |
-| `bash ctx.sh hook install` | 커밋 전 자동 로그와 로컬 컨텍스트 스냅샷 사용 |
+| `bash ctx.sh hook install` | 성공 커밋 로그와 로컬 컨텍스트 스냅샷 사용 |
 | `bash ctx.sh hook status` / `hook uninstall` | ctx-kit 훅 연동 조회 또는 해제 |
 | `bash ctx.sh version` / `help` | 스크립트 버전 또는 명령 개요 출력 |
 

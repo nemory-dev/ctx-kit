@@ -166,14 +166,14 @@ git var GIT_AUTHOR_IDENT
 git config --get core.hooksPath
 ```
 
-두 번째 명령은 미설정 상태에서 보통 출력 없이 종료 코드 1을 반환합니다. 현재 설치기는 일반 `.git/` 디렉터리를 요구하고 `.git/hooks/pre-commit`에 기록하므로 worktree와 사용자 지정 훅 경로는 [Git 제약](troubleshooting.md)을 확인하세요. 설정을 확인한 뒤 실행합니다.
+두 번째 명령은 미설정 상태에서 보통 출력 없이 종료 코드 1을 반환합니다. 현재 설치기는 일반 `.git/` 디렉터리를 요구하고 `.git/hooks/pre-commit`·`.git/hooks/post-commit`에 기록하므로 worktree와 사용자 지정 훅 경로는 [Git 제약](troubleshooting.md)을 확인하세요. 설정을 확인한 뒤 실행합니다.
 
 ```bash
 bash ctx.sh hook install
 bash ctx.sh hook status
 ```
 
-컨텍스트 안에 별도 로컬 Git 저장소를 초기화하고 컨텍스트 제외 규칙과 Git sync를 설정합니다. 로컬 컨텍스트 커밋을 만들 수 있지만 푸시하지는 않습니다. 커밋 전 동작과 연동 해제는 [사용 흐름](workflows.md)을 참고하세요.
+컨텍스트 안에 별도 로컬 Git 저장소를 초기화하고 컨텍스트 제외 규칙과 Git sync를 설정합니다. 로컬 컨텍스트 커밋을 만들 수 있지만 푸시하지는 않습니다. 성공 커밋 기록과 연동 해제는 [사용 흐름](workflows.md)을 참고하세요.
 
 ## Windows
 
