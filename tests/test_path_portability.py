@@ -163,7 +163,7 @@ class PathPortabilityTests(unittest.TestCase):
         logged = self.entries(timeline)
         self.assertEqual(len(logged), 1)
         self.assertEqual(logged[0]["files"], ["app.txt"])
-        self.assertEqual(logged[0]["commit"], "pending")
+        self.assertEqual(logged[0]["fullCommit"], self.git("rev-parse", "HEAD"))
         self.assertNotEqual(self.git("-C", str(self.context), "rev-parse", "HEAD"), context_head)
         saved = self.git("-C", str(self.context), "show", "HEAD:work-log/timeline.jsonl")
         self.assertEqual([json.loads(line) for line in saved.splitlines()], logged)

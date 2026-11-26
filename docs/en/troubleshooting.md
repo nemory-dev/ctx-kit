@@ -138,14 +138,14 @@ git config --get core.hooksPath
 bash ctx.sh hook status
 ```
 
-`git config --get core.hooksPath` prints nothing and exits 1 when unset. That result is normal. Inspect your effective `pre-commit` file locally before changing it.
+`git config --get core.hooksPath` prints nothing and exits 1 when unset. That result is normal. Inspect your effective `pre-commit` and `post-commit` files locally before changing it.
 
 | Finding | Meaning and safe next step |
 | --- | --- |
 | `.git` is a file, as in a Git worktree | The installer requires a `.git` **directory**, so it can report `.git not found` inside a valid worktree. Use manual `log`/`backfill` workflows; have the repository owner review any hook integration with the real Git directory. |
-| `core.hooksPath` is set | The installer and `hook status` use `.git/hooks/pre-commit` and do not honor that setting. An “Installed” label does not prove Git runs that file. Integrate through your existing hook system after reviewing it. |
+| `core.hooksPath` is set | The installer and `hook status` target `.git/hooks/pre-commit` and `.git/hooks/post-commit`; status warns that Git may use a different location. An “Installed” label does not prove Git runs that file. Integrate through your existing hook system after reviewing it. |
 | An older inline hook exits before ctx-kit runs | Run `bash ctx.sh hook install` with the updated CLI to migrate the known inline block to a wrapper. It runs an executable saved original first; a nonzero exit still blocks the commit and skips ctx-kit. |
-| Modified wrapper, backup collision, or missing original backup | Preserve `.git/hooks/pre-commit` and `.git/hooks/pre-commit.ctx-kit-original` if present. Installation/removal refuses unsafe replacement; inspect the reported files and recover the intended original before retrying. Do not delete a backup to bypass the error. |
+| Modified wrapper, backup collision, or missing original backup | Preserve both `.git/hooks/pre-commit` and `.git/hooks/post-commit`, together with their `.ctx-kit-original` backups when present. Installation/removal refuses unsafe replacement; inspect the reported files and recover the intended original before retrying. Do not delete a backup to bypass the error. |
 | The hook cannot find the CLI | The installed wrapper checks only root `ctx.sh` and `scripts/ctx.sh`. Restore one of those supported locations. |
 | `Author identity unknown` or local Git commit failure | The context has its own Git repository, and the initial local commit failure can be suppressed by installation. Inspect the identity available to that repository below; configure the intended identity yourself before retrying. |
 
@@ -156,7 +156,7 @@ git -C sample-context status --short
 git -C sample-context log -1 --oneline
 ```
 
-Unset identity fields return 1, and a repository without a commit makes `git log` fail. Installation modifies `.gitignore`, configuration, the context Git repository, and the hook; it is not a read-only repair. Review your layout before reinstalling. A failed context write or local commit can also block the outer Git commit; repair the reported cause and inspect the timeline before retrying, because an auto-log may already have been recorded.
+Unset identity fields return 1, and a repository without a commit makes `git log` fail. Installation modifies `.gitignore`, configuration, the context Git repository, and the hook; it is not a read-only repair. Review your layout before reinstalling. A failed post-commit context write or local snapshot reports a warning after the project commit has been created. Repair the cause and inspect the timeline before backfilling missing records; a log row may already exist when only the local snapshot failed.
 
 ## “Ignored” does not prove context is private
 
@@ -174,7 +174,7 @@ Tracked agent symlinks and ignored context are separate decisions: a symlink sto
 
 ## Invalid JSONL, permission errors, or a failed log
 
-`Git rev-parse failed`, `Git branch failed`, `Git status failed`, `Git show failed`, `Git log failed`, or `Git diff failed` means a metadata query failed. The command exits nonzero before adding a row or rewriting the active log, rather than treating the failure as a clean project or an empty file list. A broken `.git` directory or file is an error; standalone logging is reserved for projects without a repository or Git executable. Inspect the accompanying Git error and repository/index permissions, then check the existing timeline before retrying. A Git query error in the installed auto-log hook also blocks the outer project commit.
+`Git rev-parse failed`, `Git branch failed`, `Git status failed`, `Git show failed`, `Git log failed`, or `Git diff failed` means a metadata query failed. The command exits nonzero before adding a row or rewriting the active log, rather than treating the failure as a clean project or an empty file list. A broken `.git` directory or file is an error; standalone logging is reserved for projects without a repository or Git executable. Inspect the accompanying Git error and repository/index permissions, then check the existing timeline before retrying. A Git query error in the post-commit logger reports a warning and a recovery command after the project commit has been created.
 
 Writers reject malformed JSONL with a filename and line number, for example `invalid JSON at line 2` or `expected a JSON object at line 1`. Each nonblank line must be a JSON object. `null`, arrays, and strings are invalid records. Blank lines are ignored; a valid last record without a trailing newline is supported.
 
@@ -210,7 +210,7 @@ PY
 bash ctx.sh timeline --limit 20 --json
 ```
 
-Object syntax is not a full validation of every record field. `timeline` may report a traceback for malformed data; `export` propagates that failure. Run `timeline --json` directly to diagnose the active log.
+Object syntax is not a full validation of every record field. For malformed JSONL or non-object rows, `timeline` reports the file path and line number on stderr and exits with an error; `export` propagates that failure. Non-string field values remain unchanged in JSON output and are rendered as JSON in text output. Run `timeline --json` directly to diagnose the active log.
 
 `Refusing to replace non-regular file`, `Permission denied`, or an I/O error requires inspecting the exact path, permissions, and available storage. A directory or symlink at a log/destination path is intentionally not replaced by the atomic writer. Preserve it and resolve the file-type conflict deliberately. Do not make the entire project world-writable.
 
@@ -220,7 +220,7 @@ A command can fail after a log entry has been persisted, for example while creat
 
 `Timed out waiting for context writer lock: .../.ctx.lock` means another writer held the lock for the 30-second wait. The `.ctx.lock` file normally remains after commands complete; its presence alone does not mean a lock is held.
 
-Wait for the other operation or stop it normally. On macOS, `lsof sample-context/work-log/.ctx.lock` can help identify a process using the file. Do not remove an active lock file: another writer could lock a replacement file and bypass mutual exclusion. Retry only after writers have stopped, and inspect the timeline if the previous command may have appended a record. A pre-commit hook uses the same lock and may block a commit on this error.
+Wait for the other operation or stop it normally. On macOS, `lsof sample-context/work-log/.ctx.lock` can help identify a process using the file. Do not remove an active lock file: another writer could lock a replacement file and bypass mutual exclusion. Retry only after writers have stopped, and inspect the timeline if the previous command may have appended a record. The post-commit logger uses the same lock and can wait up to 30 seconds. A timeout leaves the project commit created and reports a warning; repair the cause before recovering missing records with backfill.
 
 ## Interrupted archive and recovery journal
 

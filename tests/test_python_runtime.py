@@ -260,7 +260,8 @@ class PythonRuntimeTests(unittest.TestCase):
         entries = json.loads(readback.stdout)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["files"], ["app.txt"])
-        self.assertIn("Pre-commit auto-log", entries[0]["summary"])
+        self.assertEqual(entries[0]["summary"], "Verify CRLF launcher hook")
+        self.assertEqual(entries[0]["fullCommit"], git("rev-parse", "HEAD").strip())
         local_log = git(
             "-C", str(self.project / "sample-context"),
             "show", "HEAD:work-log/timeline.jsonl",

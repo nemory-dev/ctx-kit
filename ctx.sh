@@ -48,6 +48,13 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 # ── Utils ──────────────────────────────────────────────
+need_value() {
+  if [ "$2" -lt 2 ]; then
+    echo "Error: $1 requires a value." >&2
+    return 1
+  fi
+}
+
 ctx_git() (
   # Hook Git variables belong to the parent repository, not the local context.
   local ctx_git_env_names ctx_git_env_name
@@ -123,7 +130,7 @@ def read_jsonl(path):
                 continue
             try:
                 entry = json.loads(line)
-            except ValueError as error:
+            except (ValueError, RecursionError) as error:
                 raise ValueError(f"{path}: invalid JSON at line {number}: {error}") from error
             if not isinstance(entry, dict):
                 raise ValueError(f"{path}: expected a JSON object at line {number}")
@@ -139,6 +146,112 @@ def archive_timeline_paths():
         return []
     return [os.path.join(directory, name) for name in sorted(names)
             if name.startswith("timeline-") and name.endswith(".jsonl")]
+
+
+def existing_commit_refs(root, active_entries, candidate=None):
+    existing_commits = set()
+    legacy_commits = set()
+    log_file = os.path.join(os.environ["CTX_STORAGE_DIR"], "work-log", "timeline.jsonl")
+    for path in [log_file] + archive_timeline_paths():
+        entries = active_entries if path == log_file else read_jsonl(path)
+        for entry in entries:
+            if isinstance(entry.get("fullCommit"), str) and entry["fullCommit"]:
+                existing_commits.add(entry["fullCommit"])
+            if isinstance(entry.get("commit"), str) and entry["commit"]:
+                commit = entry["commit"]
+                existing_commits.add(commit)
+                if (not entry.get("fullCommit") and isinstance(commit, str)
+                        and 4 <= len(commit) <= 64
+                        and all(char in "0123456789abcdefABCDEF" for char in commit)):
+                    legacy_commits.add(commit)
+
+    if candidate in existing_commits:
+        return existing_commits
+    if candidate is not None:
+        legacy_commits = {reference for reference in legacy_commits
+                          if candidate.startswith(reference.lower())}
+    if legacy_commits:
+        references = sorted(legacy_commits)
+        result = subprocess.run(
+            ["git", "-C", root, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+            input="\n".join(references) + "\n", text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        if result.returncode:
+            raise ValueError("Cannot resolve existing commit references: " + result.stderr.strip())
+        resolved = result.stdout.splitlines()
+        if len(resolved) != len(references):
+            raise ValueError("Incomplete Git response while resolving existing commit references")
+        for reference, record in zip(references, resolved):
+            object_id, kind = record.rsplit(" ", 1)
+            if kind == "ambiguous":
+                raise ValueError(f"Ambiguous existing commit reference: {reference}; record its full commit ID before backfill")
+            if kind == "commit" and object_id.startswith(reference.lower()):
+                existing_commits.add(object_id)
+    return existing_commits
+
+
+def git_commit_entries(root, limit=None, commit=None, entry_type="work"):
+    from datetime import datetime, timezone
+
+    git_cmd = ["log", "-z", "--date=iso-strict", "--encoding=UTF-8", "--no-show-signature", "--no-notes"]
+    if limit is not None:
+        git_cmd.extend(["-n", str(limit)])
+    if commit is not None:
+        git_cmd.append(commit)
+
+    git_cmd.extend(["--format=%x00%H%x00%h%x00%ad%x00%s%x00%b", "--name-only"])
+
+    fields = git_output(root, git_cmd).split("\0")
+    new_entries = []
+    index = 0
+
+    while index < len(fields) - 1:
+        if fields[index] != "" or index + 6 >= len(fields):
+            raise ValueError("Invalid NUL-delimited Git commit record")
+        full_commit, short_commit, date_str, subject, body = fields[index + 1:index + 6]
+        body = body.strip()
+        index += 6
+        files = []
+        if fields[index]:
+            # Git inserts one formatting newline before the first path, even with -z.
+            if not fields[index].startswith("\n"):
+                raise ValueError("Invalid Git commit file-list separator")
+            files.append(fields[index][1:])
+            index += 1
+            while index < len(fields) and fields[index]:
+                files.append(fields[index])
+                index += 1
+
+        try:
+            dt = datetime.fromisoformat(date_str)
+            created_at = dt.astimezone(timezone.utc).isoformat()
+            ts_id = dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        except Exception:
+            created_at = date_str
+            ts_id = "historic"
+
+        context_path = os.path.relpath(os.environ["CTX_STORAGE_DIR"], root).replace(os.sep, "/")
+        if context_path != ".." and not context_path.startswith("../"):
+            files = [path for path in files
+                     if context_path != "." and path != context_path
+                     and not path.startswith(context_path + "/")]
+        summary = f"{subject}\n\n{body}".strip() if body else subject
+
+        entry = {
+            "id": f"{ts_id}-{short_commit}",
+            "createdAt": created_at,
+            "type": entry_type,
+            "title": subject or f"Commit {short_commit}",
+            "summary": summary,
+            "commit": short_commit,
+            "fullCommit": full_commit,
+            "branch": "",
+            "dirty": False,
+            "files": files,
+        }
+        new_entries.append(entry)
+    return new_entries
 
 
 def stage_text_writes(writes):
@@ -342,6 +455,7 @@ command = ["git", "-c", "safe.directory=*", "-C", os.environ["CTX_STORAGE_DIR"]]
 git_env = os.environ.copy()
 for name in subprocess.check_output(["git", "rev-parse", "--local-env-vars"], text=True).splitlines():
     git_env.pop(name, None)
+git_env["CTX_CONTEXT_SNAPSHOT"] = "1"
 
 def git(args):
     result = subprocess.run(command + args, env=git_env)
@@ -441,8 +555,8 @@ except (OSError, ValueError) as error:
 
 require_config() {
   if [ ! -f "$CONFIG" ]; then
-    echo -e "${RED}Error: ctx.config.json not found.${NC}"
-    echo "  Run first: bash ctx.sh init"
+    echo -e "${RED}Error: ctx.config.json not found.${NC}" >&2
+    echo "  Run first: bash ctx.sh init" >&2
     exit 1
   fi
 }
@@ -451,11 +565,19 @@ resolve_context_dir() {
   require_config
   require_python
   local source_dir
-  source_dir=$(ctx_python -c 'import json, os, sys
+  source_dir=$(config_python <<'PYEOF'
 # Paths consumed by Bash must use LF even with native Windows Python.
 sys.stdout.reconfigure(newline="\n")
-with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
-print(os.path.dirname(d.get("source", "sample-context/AGENT_RULES.md")) or "sample-context")' "$(py_path "$CONFIG")")
+with open(os.environ["CTX_CONFIG"], encoding="utf-8") as stream:
+    config = json.load(stream)
+if not isinstance(config, dict):
+    raise ValueError("ctx.config.json must contain an object")
+source = config.get("source", "sample-context/AGENT_RULES.md")
+if not isinstance(source, str):
+    raise ValueError("Configuration source must be a string")
+print(os.path.dirname(source) or "sample-context")
+PYEOF
+  )
   CONTEXT_DIR="$PROJECT_ROOT/$source_dir"
 }
 
@@ -497,7 +619,7 @@ cmd_help() {
   printf "  %-20s %s\n" "handoff"        "Quote grounded handoff sections and selected records"
   printf "  %-20s %s\n" "backfill"       "Backfill past Git commits into context work-log"
   printf "  %-20s %s\n" "archive"        "Archive completed tasks, deprecated ADRs & split logs"
-  printf "  %-20s %s\n" "hook [cmd]"     "Manage Git pre-commit hook (install|uninstall|status)"
+  printf "  %-20s %s\n" "hook [cmd]"     "Manage Git logging hooks (install|uninstall|status)"
   printf "  %-20s %s\n" "version"        "Show version"
   printf "  %-20s %s\n" "help"           "Show this help"
   echo ""
@@ -524,7 +646,7 @@ cmd_help() {
   echo "  bash ctx.sh view --open     # Browse a local context snapshot"
   echo "  bash ctx.sh backfill --limit 30 # Backfill past commits"
   echo "  bash ctx.sh archive         # Compact context & archive completed tasks"
-  echo "  bash ctx.sh hook install    # Install Git pre-commit auto-sync hook"
+  echo "  bash ctx.sh hook install    # Install Git post-commit logging and local context snapshots"
   echo ""
 }
 
@@ -868,7 +990,7 @@ EOF
     else
       local hk_ans="y"
       if [ -t 0 ] || [ -e /dev/tty ]; then
-        read -r -p "  Install Git pre-commit hook to auto-sync ${context_label}? [Y/n]: " hk_ans </dev/tty 2>/dev/null || hk_ans="y"
+        read -r -p "  Install Git logging hooks to auto-sync ${context_label}? [Y/n]: " hk_ans </dev/tty 2>/dev/null || hk_ans="y"
       fi
       if [[ "$hk_ans" =~ ^[Nn]$ ]]; then
         do_hook="false"
@@ -1252,7 +1374,7 @@ cmd_list() {
 cmd_enable() {
   require_config
   local NAME="$1"
-  [ -z "$NAME" ] && { echo "Usage: bash ctx.sh enable <agent name>"; cmd_list; return 1; }
+  [ -z "$NAME" ] && { echo "Usage: bash ctx.sh enable <agent name>" >&2; cmd_list >&2; return 1; }
   _toggle_agent "$NAME" true
   cmd_sync
 }
@@ -1260,7 +1382,7 @@ cmd_enable() {
 cmd_disable() {
   require_config
   local NAME="$1"
-  [ -z "$NAME" ] && { echo "Usage: bash ctx.sh disable <agent name>"; cmd_list; return 1; }
+  [ -z "$NAME" ] && { echo "Usage: bash ctx.sh disable <agent name>" >&2; cmd_list >&2; return 1; }
   _toggle_agent "$NAME" false
   cmd_sync
 }
@@ -1301,7 +1423,7 @@ cmd_generate() {
   require_python
 
   local TYPE="$1"
-  [ -z "$TYPE" ] && { echo "Usage: bash ctx.sh generate <type>"; echo "Types are defined in ctx.config.json under \"generate\"."; exit 1; }
+  [ -z "$TYPE" ] && { echo "Usage: bash ctx.sh generate <type>" >&2; echo "Types are defined in ctx.config.json under \"generate\"." >&2; exit 1; }
 
   echo -e "$BOLD[ctx generate $TYPE]$NC"
   echo ""
@@ -1428,11 +1550,11 @@ cmd_log() {
   local SUMMARY="" TITLE="" COMMIT="" FILES="" TYPE="work"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --summary|-s) SUMMARY="$2"; shift 2 ;;
-      --title|-t) TITLE="$2"; shift 2 ;;
-      --commit|-c) COMMIT="$2"; shift 2 ;;
-      --files|-f) FILES="$2"; shift 2 ;;
-      --type) TYPE="$2"; shift 2 ;;
+      --summary|-s) need_value "$1" "$#" || return 1; SUMMARY="$2"; shift 2 ;;
+      --title|-t) need_value "$1" "$#" || return 1; TITLE="$2"; shift 2 ;;
+      --commit|-c) need_value "$1" "$#" || return 1; COMMIT="$2"; shift 2 ;;
+      --files|-f) need_value "$1" "$#" || return 1; FILES="$2"; shift 2 ;;
+      --type) need_value "$1" "$#" || return 1; TYPE="$2"; shift 2 ;;
       --help|-h)
         echo "Usage: bash ctx.sh log --summary \"...\" [--title \"...\"] [--commit <id>] [--files a,b] [--type work|docs|release]"
         return 0
@@ -1446,7 +1568,7 @@ cmd_log() {
   done
 
   if [ -z "$SUMMARY" ]; then
-    echo "Usage: bash ctx.sh log --summary \"what changed\" [--commit <id>] [--title \"...\"]"
+    echo "Usage: bash ctx.sh log --summary \"what changed\" [--commit <id>] [--title \"...\"]" >&2
     return 1
   fi
 
@@ -1550,14 +1672,14 @@ cmd_timeline() {
   local LIMIT="20" COMMIT="" JSON_MODE="false"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --limit|-n) LIMIT="$2"; shift 2 ;;
-      --commit|-c) COMMIT="$2"; shift 2 ;;
+      --limit|-n) need_value "$1" "$#" || return 1; LIMIT="$2"; shift 2 ;;
+      --commit|-c) need_value "$1" "$#" || return 1; COMMIT="$2"; shift 2 ;;
       --json) JSON_MODE="true"; shift ;;
       --help|-h)
         echo "Usage: bash ctx.sh timeline [--limit 20] [--commit <id>] [--json]"
         return 0
         ;;
-      *) echo "Unknown option: $1"; return 1 ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
     esac
   done
 
@@ -1571,7 +1693,7 @@ cmd_timeline() {
     return 0
   fi
 
-  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_LIMIT="$LIMIT" CTX_COMMIT="$COMMIT" CTX_JSON="$JSON_MODE" ctx_python << 'PYEOF'
+  CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" CTX_LIMIT="$LIMIT" CTX_COMMIT="$COMMIT" CTX_JSON="$JSON_MODE" context_python --read-only << 'PYEOF'
 import json
 import os
 
@@ -1581,17 +1703,13 @@ limit = int(os.environ["CTX_LIMIT"])
 commit_filter = os.environ["CTX_COMMIT"].strip()
 json_mode = os.environ["CTX_JSON"] == "true"
 
-entries = []
-with open(log_file, encoding="utf-8") as f:
-    for line in f:
-        line = line.strip()
-        if line:
-            entries.append(json.loads(line))
+entries = read_jsonl(log_file)
 
 if commit_filter:
     entries = [
         e for e in entries
-        if e.get("commit", "").startswith(commit_filter) or e.get("fullCommit", "").startswith(commit_filter)
+        if any(isinstance(e.get(key), str) and e[key].startswith(commit_filter)
+               for key in ("commit", "fullCommit"))
     ]
 
 entries = list(reversed(entries))[:limit]
@@ -1608,18 +1726,30 @@ print("[ctx timeline]")
 print(f"Source: {os.path.relpath(log_file, root)}")
 print("")
 
+def display_value(value):
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
 for entry in entries:
     dirty = " +dirty" if entry.get("dirty") else ""
-    branch = f" ({entry.get('branch')})" if entry.get("branch") else ""
-    print(f"- {entry.get('createdAt', '')[:10]} {entry.get('commit', 'uncommitted')}{dirty}{branch}")
-    print(f"  {entry.get('title', '')}")
+    branch_value = entry.get("branch", "")
+    branch = " (" + display_value(branch_value) + ")" if branch_value != "" else ""
+    created = entry.get("createdAt", "")
+    date = created[:10] if isinstance(created, str) else display_value(created)
+    commit = display_value(entry.get("commit", "uncommitted"))
+    print(f"- {date} {commit}{dirty}{branch}")
+    print("  " + display_value(entry.get("title", "")))
     summary = entry.get("summary", "")
-    if summary and summary != entry.get("title", ""):
+    if not isinstance(summary, str):
+        print("  " + display_value(summary))
+    elif summary and summary != entry.get("title", ""):
         for line in summary.splitlines()[:4]:
             print(f"  {line}")
-    files = entry.get("files") or []
-    if files:
-        shown = ", ".join(files[:5])
+    files = entry.get("files", [])
+    if not isinstance(files, list):
+        print("  files: " + json.dumps(files, ensure_ascii=False))
+    elif files:
+        shown = ", ".join(display_value(value) for value in files[:5])
         suffix = f" +{len(files) - 5} more" if len(files) > 5 else ""
         print(f"  files: {shown}{suffix}")
     print("")
@@ -1635,14 +1765,14 @@ cmd_backfill() {
   local LIMIT="30" ALL_MODE="false" TYPE="work"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --limit|-n) LIMIT="$2"; shift 2 ;;
+      --limit|-n) need_value "$1" "$#" || return 1; LIMIT="$2"; shift 2 ;;
       --all)      ALL_MODE="true"; shift ;;
-      --type)     TYPE="$2"; shift 2 ;;
+      --type)     need_value "$1" "$#" || return 1; TYPE="$2"; shift 2 ;;
       --help|-h)
         echo "Usage: bash ctx.sh backfill [--limit 30] [--all] [--type work|docs]"
         return 0
         ;;
-      *) echo "Unknown option: $1"; return 1 ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
     esac
   done
 
@@ -1671,94 +1801,11 @@ limit = int(os.environ["CTX_LIMIT"])
 all_mode = os.environ["CTX_ALL"] == "true"
 entry_type = os.environ["CTX_TYPE"]
 
-existing_commits = set()
-legacy_commits = set()
 existing_entries = read_jsonl(log_file)
-for path in [log_file] + archive_timeline_paths():
-    entries = existing_entries if path == log_file else read_jsonl(path)
-    for entry in entries:
-        if entry.get("fullCommit"):
-            existing_commits.add(entry["fullCommit"])
-        if entry.get("commit"):
-            commit = entry["commit"]
-            existing_commits.add(commit)
-            if (not entry.get("fullCommit") and isinstance(commit, str)
-                    and 4 <= len(commit) <= 64
-                    and all(char in "0123456789abcdefABCDEF" for char in commit)):
-                legacy_commits.add(commit)
-
-if legacy_commits:
-    references = sorted(legacy_commits)
-    result = subprocess.run(
-        ["git", "-C", root, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-        input="\n".join(references) + "\n", text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
-    if result.returncode:
-        raise ValueError("Cannot resolve existing commit references: " + result.stderr.strip())
-    resolved = result.stdout.splitlines()
-    if len(resolved) != len(references):
-        raise ValueError("Incomplete Git response while resolving existing commit references")
-    for reference, record in zip(references, resolved):
-        object_id, kind = record.rsplit(" ", 1)
-        if kind == "ambiguous":
-            raise ValueError(f"Ambiguous existing commit reference: {reference}; record its full commit ID before backfill")
-        if kind == "commit" and object_id.startswith(reference.lower()):
-            existing_commits.add(object_id)
-
-git_cmd = ["log", "-z", "--date=iso-strict", "--encoding=UTF-8", "--no-show-signature", "--no-notes"]
-if not all_mode:
-    git_cmd.extend(["-n", str(limit)])
-
-git_cmd.extend(["--format=%x00%H%x00%h%x00%ad%x00%s%x00%b", "--name-only"])
-
-fields = git_output(root, git_cmd).split("\0")
-new_entries = []
-index = 0
-
-while index < len(fields) - 1:
-    if fields[index] != "" or index + 6 >= len(fields):
-        raise ValueError("Invalid NUL-delimited Git commit record")
-    full_commit, short_commit, date_str, subject, body = fields[index + 1:index + 6]
-    body = body.strip()
-    index += 6
-    files = []
-    if fields[index]:
-        # Git inserts one formatting newline before the first path, even with -z.
-        if not fields[index].startswith("\n"):
-            raise ValueError("Invalid Git commit file-list separator")
-        files.append(fields[index][1:])
-        index += 1
-        while index < len(fields) and fields[index]:
-            files.append(fields[index])
-            index += 1
-
-    if full_commit in existing_commits or short_commit in existing_commits:
-        continue
-
-    try:
-        dt = datetime.fromisoformat(date_str)
-        created_at = dt.astimezone(timezone.utc).isoformat()
-        ts_id = dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    except Exception:
-        created_at = date_str
-        ts_id = "historic"
-
-    summary = f"{subject}\n\n{body}".strip() if body else subject
-
-    entry = {
-        "id": f"{ts_id}-{short_commit}",
-        "createdAt": created_at,
-        "type": entry_type,
-        "title": subject or f"Commit {short_commit}",
-        "summary": summary,
-        "commit": short_commit,
-        "fullCommit": full_commit,
-        "branch": "",
-        "dirty": False,
-        "files": files,
-    }
-    new_entries.append(entry)
+existing_commits = existing_commit_refs(root, existing_entries)
+new_entries = [entry for entry in git_commit_entries(
+    root, limit=None if all_mode else limit, entry_type=entry_type)
+    if entry["fullCommit"] not in existing_commits and entry["commit"] not in existing_commits]
 
 if not new_entries:
     print(f"[ctx backfill] No new Git commits to backfill (already up to date).")
@@ -1814,7 +1861,7 @@ cmd_archive() {
         echo "  --no-decisions  Do not archive deprecated/superseded ADRs from decisions.md"
         return 0
         ;;
-      *) echo "Unknown option: $1"; return 1 ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
     esac
   done
 
@@ -2040,8 +2087,9 @@ PYEOF
 }
 
 # ── hook ───────────────────────────────────────────────
-_manage_pre_commit_hook() {
-  ctx_python - "$1" "$(py_path "$PROJECT_ROOT/.git/hooks/pre-commit")" <<'PYEOF'
+_manage_git_hook() {
+  local hook_name="${2:-pre-commit}"
+  ctx_python - "$1" "$(py_path "$PROJECT_ROOT/.git/hooks/$hook_name")" <<'PYEOF'
 import errno
 import os
 import stat
@@ -2049,6 +2097,7 @@ import sys
 import tempfile
 
 action, hook = sys.argv[1:]
+name = os.path.basename(hook)
 backup = hook + ".ctx-kit-original"
 begin = b"# --- BEGIN CTX-KIT GIT-SYNC HOOK ---"
 end = b"# --- END CTX-KIT GIT-SYNC HOOK ---"
@@ -2080,6 +2129,24 @@ fi
 '''
 
 def wrapper(original):
+    if name == "post-commit":
+        original_post = (with_original if original else without_original).replace(b"pre-commit", b"post-commit")
+        original_post = original_post.replace(
+            b'  if [ "$ctx_original_status" -ne 0 ]; then\n    exit "$ctx_original_status"\n  fi\n', b"")
+        post_block = b'''if [ -f "ctx.sh" ]; then
+  if ! bash ctx.sh _hook_run_post_commit "$ctx_head"; then
+    echo "[ctx] Warning: post-commit recording or context snapshot failed. Run bash ctx.sh backfill to recover missing records." >&2
+  fi
+elif [ -f "scripts/ctx.sh" ]; then
+  if ! bash scripts/ctx.sh _hook_run_post_commit "$ctx_head"; then
+    echo "[ctx] Warning: post-commit recording or context snapshot failed. Run bash scripts/ctx.sh backfill to recover missing records." >&2
+  fi
+fi
+exit "$ctx_original_status"
+'''
+        return (b"#!/bin/sh\n# --- BEGIN CTX-KIT POST-COMMIT HOOK ---\n"
+                + b'ctx_head=$(git rev-parse --verify HEAD) || ctx_head=""\nctx_original_status=0\n'
+                + original_post + post_block + b"# --- END CTX-KIT POST-COMMIT HOOK ---\n")
     return (b"#!/bin/sh\n" + begin + b"\n"
             + (with_original if original else without_original) + ctx_block + end + b"\n")
 
@@ -2125,23 +2192,24 @@ try:
     if managed:
         original = content == wrapper(True)
         if original != (saved is not None):
-            raise ValueError(f"Original pre-commit hook backup is missing or unexpected: {backup}. Preserve both paths and reconcile before retrying.")
+            raise ValueError(f"Original {name} hook backup is missing or unexpected: {backup}. Preserve both paths and reconcile before retrying.")
     else:
         if saved is not None:
             raise ValueError(f"Hook backup already exists: {backup}. Preserve both hooks; refusing to overwrite either.")
         original = info is not None
-        if content is not None and (begin in content or end in content):
-            if (stat.S_ISLNK(info.st_mode) or not content.endswith(legacy)
+        markers = (begin, end, b"# --- BEGIN CTX-KIT POST-COMMIT HOOK ---", b"# --- END CTX-KIT POST-COMMIT HOOK ---")
+        if content is not None and any(marker in content for marker in markers):
+            if (name != "pre-commit" or stat.S_ISLNK(info.st_mode) or not content.endswith(legacy)
                     or content.count(begin) != 1 or content.count(end) != 1):
                 raise ValueError(f"Modified or unrecognized ctx hook: {hook}. Preserve it and reconcile before retrying.")
             content = content[:-len(legacy)]
             legacy_hook = True
 
-    if action == "check-install":
+    if action in ("check-install", "check-uninstall"):
         pass
     elif action == "install":
         if managed:
-            print("  Pre-commit hook already installed in .git/hooks/pre-commit")
+            print(f"  {name.capitalize()} hook already installed in .git/hooks/{name}")
         else:
             os.makedirs(os.path.dirname(hook), exist_ok=True)
             if original:
@@ -2155,20 +2223,20 @@ try:
                         stream.flush()
                         os.fsync(stream.fileno())
             replace_text(hook, wrapper(original), 0o755)
-            print("  Installed pre-commit wrapper in .git/hooks/pre-commit")
+            print(f"  Installed {name} wrapper in .git/hooks/{name}")
     elif action == "uninstall":
         if managed:
             if original:
                 os.replace(backup, hook)
-                print("  Restored original pre-commit hook")
+                print(f"  Restored original {name} hook")
             else:
                 os.unlink(hook)
-                print("  Removed ctx-kit pre-commit hook")
+                print(f"  Removed ctx-kit {name} hook")
         elif legacy_hook:
             replace_text(hook, content, stat.S_IMODE(info.st_mode))
             print("  Removed legacy ctx-kit hook block")
         else:
-            print("  ctx-kit hook is not installed in .git/hooks/pre-commit")
+            print(f"  ctx-kit hook is not installed in .git/hooks/{name}")
     else:
         raise ValueError(f"Unknown hook action: {action}")
 except (OSError, ValueError) as error:
@@ -2183,7 +2251,7 @@ cmd_hook() {
     uninstall) _hook_uninstall ;;
     status)    _hook_status ;;
     *)
-      echo "Usage: bash ctx.sh hook [install|uninstall|status]"
+      echo "Usage: bash ctx.sh hook [install|uninstall|status]" >&2
       return 1
       ;;
   esac
@@ -2199,7 +2267,8 @@ _hook_install() {
   fi
 
   # Refuse ambiguous hook/backup state before changing project configuration.
-  _manage_pre_commit_hook check-install
+  _manage_git_hook check-install pre-commit
+  _manage_git_hook check-install post-commit
 
   local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
   local ignore_pattern
@@ -2251,6 +2320,10 @@ PY
     echo -e "  ${YELLOW}~${NC} ${rel_context_dir}/ is already an initialized Git repo"
   fi
 
+  # Install both wrappers before enabling integration in the configuration.
+  _manage_git_hook install post-commit
+  _manage_git_hook install pre-commit
+
   # 3) Ensure git_sync is enabled in ctx.config.json
   config_python << 'PYEOF'
 import json
@@ -2267,19 +2340,19 @@ write_config(data)
 PYEOF
   echo -e "  ${GREEN}✓${NC} Enabled git_sync in ctx.config.json (auto_log: true)"
 
-  # 4) Chain the original hook without changing its interpreter or exit behavior.
-  _manage_pre_commit_hook install
-
   echo -e "\n${GREEN}🎉 Git sync hook setup complete!${NC}"
   echo "  - Changes in ${rel_context_dir}/ will be auto-committed locally on 'git commit'"
-  echo "  - auto_log is ENABLED: commit changes will be summarized into timeline.jsonl before each commit"
+  echo "  - auto_log records successful commits in timeline.jsonl from post-commit when enabled"
   echo "  - (To disable auto-log, set \"auto_log\": false under \"git_sync\" in ctx.config.json)"
 }
 
 _hook_uninstall() {
   require_config
   require_python
-  _manage_pre_commit_hook uninstall
+  _manage_git_hook check-uninstall pre-commit
+  _manage_git_hook check-uninstall post-commit
+  _manage_git_hook uninstall post-commit
+  _manage_git_hook uninstall pre-commit
 
   config_python << 'PYEOF'
 import json
@@ -2299,6 +2372,7 @@ _hook_status() {
   resolve_context_dir
   local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
   local hook_file="$PROJECT_ROOT/.git/hooks/pre-commit"
+  local post_hook="$PROJECT_ROOT/.git/hooks/post-commit"
   local HOOK_BEGIN="# --- BEGIN CTX-KIT GIT-SYNC HOOK ---"
 
   echo -e "${BOLD}[ctx hook status]${NC}"
@@ -2327,8 +2401,22 @@ print("{}|{}".format(gs.get("enabled", False), gs.get("auto_log", False)))' "$(p
     echo -e "  pre-commit hook: ${RED}Not installed${NC}"
   fi
 
+  if [ -x "$post_hook" ] && grep -q '# --- BEGIN CTX-KIT POST-COMMIT HOOK ---' "$post_hook"; then
+    echo -e "  post-commit hook: ${GREEN}Installed${NC} ($post_hook)"
+  else
+    echo -e "  post-commit hook: ${RED}Not installed${NC} (run bash ${SCRIPT_PATH#$PROJECT_ROOT/} hook install)"
+  fi
+  local configured_hooks
+  configured_hooks=$(git -C "$PROJECT_ROOT" config --get core.hooksPath) || configured_hooks=""
+  if [ -n "$configured_hooks" ]; then
+    echo "Warning: core.hooksPath overrides .git/hooks; review your hook integration before relying on it." >&2
+  fi
+  if [ ! -d "$PROJECT_ROOT/.git" ]; then
+    echo "Warning: automatic installation requires a standard .git directory; review linked worktree integration separately." >&2
+  fi
+
   if git -C "$PROJECT_ROOT" check-ignore -q -- "$rel_context_dir/" 2>/dev/null; then
-    echo -e "  Git exclusion:   ${GREEN}Ignored${NC} (${rel_context_dir}/ is safe from remote push)"
+    echo -e "  Git exclusion:   ${GREEN}Ignored${NC} (${rel_context_dir}/)"
   else
     echo -e "  Git exclusion:   ${RED}Not ignored!${NC} (Warning: context may be tracked by main repo)"
   fi
@@ -2343,73 +2431,63 @@ print("{}|{}".format(gs.get("enabled", False), gs.get("auto_log", False)))' "$(p
 }
 
 _hook_run_pre_commit() {
+  local post_hook="$PROJECT_ROOT/.git/hooks/post-commit"
+  if [ "${CTX_CONTEXT_SNAPSHOT:-}" != "1" ] &&
+     { [ ! -x "$post_hook" ] || ! grep -q '# --- BEGIN CTX-KIT POST-COMMIT HOOK ---' "$post_hook"; }; then
+    echo "[ctx] Warning: post-commit is missing. Run bash ${SCRIPT_PATH#$PROJECT_ROOT/} hook install, then bash ${SCRIPT_PATH#$PROJECT_ROOT/} backfill." >&2
+  fi
+  return 0
+}
+
+_hook_run_post_commit() {
+  if [ "${CTX_CONTEXT_SNAPSHOT:-}" = "1" ]; then
+    return 0
+  fi
   require_config
   resolve_context_dir
   require_python
 
-  local rel_context_dir="${CONTEXT_DIR#$PROJECT_ROOT/}"
-
   local cfg_status
-  cfg_status=$(ctx_python -c '
-import json, sys
+  cfg_status=$(config_python <<'PYEOF'
 sys.stdout.reconfigure(newline="\n")
-with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
-gs = d.get("git_sync", {})
-print("{}|{}".format(gs.get("enabled", False), gs.get("auto_log", False)))' "$(py_path "$CONFIG")")
+with open(os.environ["CTX_CONFIG"], encoding="utf-8") as stream:
+    config = json.load(stream)
+git_sync = config.get("git_sync", {})
+if not isinstance(git_sync, dict):
+    raise ValueError("Configuration git_sync must be an object")
+print("{}|{}".format(git_sync.get("enabled", False), git_sync.get("auto_log", False)))
+PYEOF
+  )
   local cfg_enabled="${cfg_status%|*}"
   local cfg_autolog="${cfg_status#*|}"
-
   if [ "$cfg_enabled" != "True" ]; then
-    exit 0
+    return 0
   fi
 
   if [ "$cfg_autolog" = "True" ]; then
-    local LOG_DIR="$CONTEXT_DIR/work-log"
-    local LOG_FILE="$LOG_DIR/timeline.jsonl"
-    mkdir -p "$LOG_DIR"
-
-    CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_LOG_FILE="$(py_path "$LOG_FILE")" context_python << 'PYEOF'
-import os
-from uuid import uuid4
-from datetime import datetime, timezone
-
+    CTX_ROOT="$(py_path "$PROJECT_ROOT")" CTX_COMMITTED_ID="${1:-}" GIT_OPTIONAL_LOCKS=0 context_python << 'PYEOF'
 root = os.environ["CTX_ROOT"]
-log_file = os.environ["CTX_LOG_FILE"]
-
-diff_args = ["diff", "--cached", "--", "."]
-context_relative = os.path.relpath(os.environ["CTX_STORAGE_DIR"], root)
-if not (context_relative == ".." or context_relative.startswith(".." + os.sep)):
-    diff_args.append(":(exclude,literal)" + context_relative.replace(os.sep, "/") + "/")
-staged_names = git_paths(root, diff_args[:2] + ["--name-only", "-z"] + diff_args[2:])
-
-if staged_names:
-    diff_stat = git_output(root, diff_args[:2] + ["--stat"] + diff_args[2:]).strip()
-    branch = git_output(root, ["branch", "--show-current"]).strip()
-    short_files = staged_names[:3]
-    file_summary = ", ".join(os.path.basename(f) for f in short_files)
-    if len(staged_names) > 3:
-        file_summary += f" +{len(staged_names)-3} more"
-
-    title = f"Changes in {file_summary}"
-    summary = f"Pre-commit auto-log for {len(staged_names)} staged file(s).\n\nDiff stat:\n{diff_stat}"
-    now = datetime.now(timezone.utc)
-
-    entry = {
-        "id": str(uuid4()),
-        "createdAt": now.isoformat(),
-        "type": "work",
-        "title": title,
-        "summary": summary,
-        "commit": "pending",
-        "fullCommit": "pending",
-        "branch": branch,
-        "dirty": True,
-        "files": staged_names,
-    }
-
+reference = os.environ["CTX_COMMITTED_ID"]
+if len(reference) not in (40, 64) or any(char not in "0123456789abcdefABCDEF" for char in reference):
+    raise ValueError("The post-commit hook requires a captured full hexadecimal commit ID")
+full_commit = reference.lower()
+if git_output(root, ["cat-file", "-t", full_commit]).strip() != "commit":
+    raise ValueError("The captured post-commit object is not a commit")
+log_file = os.path.join(os.environ["CTX_STORAGE_DIR"], "work-log", "timeline.jsonl")
+existing = existing_commit_refs(root, read_jsonl(log_file), candidate=full_commit)
+entries = git_commit_entries(root, limit=1, commit=full_commit)
+if len(entries) != 1 or entries[0]["fullCommit"] != full_commit:
+    raise ValueError("Git did not return the captured post-commit object")
+entry = entries[0]
+if full_commit not in existing and entry["commit"] not in existing:
+    entry["branch"] = git_output(root, ["branch", "--show-current"]).strip()
+    status_args = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."]
+    lock_path = os.path.relpath(os.path.join(os.environ["CTX_STORAGE_DIR"], "work-log", ".ctx.lock"), root)
+    if lock_path != ".." and not lock_path.startswith(".." + os.sep):
+        status_args.append(":(exclude,literal)" + lock_path.replace(os.sep, "/"))
+    entry["dirty"] = bool(git_output(root, status_args))
     append_jsonl(log_file, entry)
-
-    print(f"[ctx] 📝 Auto-recorded work-log before commit: {title}")
+    print(f"[ctx] Recorded committed work-log: {entry['commit']}")
 PYEOF
   fi
 
@@ -2417,10 +2495,8 @@ PYEOF
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     context_git_commit "Auto-sync local context ($timestamp)" \
-      "[ctx] 🔒 Auto-committed local context (${rel_context_dir}) to local Git."
+      "[ctx] Auto-committed local context to local Git."
   fi
-
-  exit 0
 }
 
 # ── view ───────────────────────────────────────────────
@@ -4905,6 +4981,7 @@ case "${1:-help}" in
   archive)  cmd_archive "${@:2}" ;;
   hook)     cmd_hook "${@:2}" ;;
   _hook_run_pre_commit) _hook_run_pre_commit ;;
+  _hook_run_post_commit) _hook_run_post_commit "${2:-}" ;;
   version) cmd_version ;;
   help|--help|-h) cmd_help ;;
   *) echo "Unknown command: $1" >&2; cmd_help; exit 1 ;;

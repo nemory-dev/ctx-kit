@@ -139,16 +139,22 @@ class LogSafetyTests(unittest.TestCase):
         self.assertEqual(len({entry["id"] for entry in entries}), 2)
         self.assertEqual(entries[0]["createdAt"], entries[1]["createdAt"])
 
-    def test_pre_commit_ids_are_unique_with_identical_time(self):
-        self.freeze_clock()
+    def test_post_commit_ids_are_unique_with_identical_author_time(self):
+        self.env.update(GIT_AUTHOR_DATE="2026-10-24T12:00:00+00:00",
+                        GIT_COMMITTER_DATE="2026-10-24T12:00:00+00:00")
         self.git("init", "--quiet")
-        (self.project / "app.txt").write_text("staged content\n")
-        self.git("add", "app.txt")
-        for _ in range(2):
-            result = self.run_ctx("_hook_run_pre_commit")
+        for content in ("first", "second"):
+            (self.project / "app.txt").write_text(content + "\n")
+            self.git("add", "app.txt")
+            self.git("commit", "--quiet", "-m", content)
+            committed = self.git("rev-parse", "HEAD").strip()
+            result = self.run_ctx("_hook_run_post_commit", committed)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         entries = self.read_entries()
         self.assertEqual(len({entry["id"] for entry in entries}), 2)
+        self.assertEqual(entries[0]["createdAt"], entries[1]["createdAt"])
+        self.assertEqual(self.run_ctx("_hook_run_post_commit", committed).returncode, 0)
+        self.assertEqual(self.read_entries(), entries)
 
     def test_log_preserves_corrupt_jsonl_without_appending(self):
         original = b'{"id":"broken","summary":"keep this original"\n'

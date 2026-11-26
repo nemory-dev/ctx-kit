@@ -96,9 +96,11 @@ bash ctx.sh backfill --limit 30
 bash ctx.sh timeline --limit 5 --json
 ```
 
+`timeline` reports malformed or non-object JSONL with a source line and an error on stderr. Its JSON output preserves field values. Text output displays non-string field values as JSON, and commit filtering compares string fields only.
+
 `backfill` imports Git commit messages, dates, and file names. It cannot reconstruct uncommitted work or validation results that were not recorded in Git.
 
-File paths and commit fields are read with NUL separators, so unusual file names and message text such as `__CTX_FILES__` or `__CTX_COMMIT_START__` do not split or truncate imported records. Empty commits keep an empty file list.
+File paths and commit fields are read with NUL separators, so unusual file names and message text such as `__CTX_FILES__` or `__CTX_COMMIT_START__` do not split or truncate imported records. Empty commits keep an empty file list. The configured context directory is excluded from imported file lists; context-only commits are retained with an empty file list.
 
 | Option | Meaning |
 | --- | --- |
@@ -280,9 +282,9 @@ Successful collection replaces the output atomically and preserves its existing 
 
 Collection does not honor `.gitignore` as a filter and performs no secret or binary scan. Review patterns and output yourself, especially before replacing exact paths with broad globs. Output exclusion does not filter other private files or deduplicate overlapping patterns.
 
-## Opt in to local Git snapshots and pre-commit logs
+## Opt in to local Git snapshots and committed logs
 
-The hook changes `.gitignore`, `ctx.config.json`, `.git/hooks/pre-commit`, and the context directory. Use it when you want those local changes. A standard project `.git` directory and a usable Git author identity are prerequisites. Check your identity before installation:
+Hook installation changes `.gitignore`, `ctx.config.json`, both `.git/hooks/pre-commit` and `.git/hooks/post-commit`, and the context directory. Use it when you want those local changes. A standard project `.git` directory and a usable Git author identity are prerequisites. Check your identity before installation:
 
 ```bash
 git var GIT_AUTHOR_IDENT
@@ -292,19 +294,22 @@ bash ctx.sh hook status
 
 If the identity check fails, configure your normal project or global Git identity first. A project-only identity is not automatically a configuration for the independent context repository; see [Git identity troubleshooting](troubleshooting.md).
 
-Installation initializes an independent Git repository inside the context directory, adds a context ignore rule when needed, enables `git_sync.enabled`, and installs a pre-commit wrapper. It defaults `auto_log` to `true` only when the key is absent; an existing `false` value is preserved. Inspect the reported configuration with `hook status`.
+Installation initializes an independent Git repository inside the context directory, adds a context ignore rule when needed, enables `git_sync.enabled`, and installs pre-commit and post-commit wrappers. It defaults `auto_log` to `true` only when the key is absent; an existing `false` value is preserved. Inspect the reported configuration with `hook status`.
 
 New ignore rules are anchored at the project root and escape pattern characters so the configured directory is matched literally. Names containing `%`, backslashes, `*`, `?`, brackets, `#`, `!`, spaces, Unicode, or apostrophes do not become formatting instructions or broader patterns. Installation verifies the new rule with Git before proceeding. A Git exclusion-check error or a context path containing CR/LF line breaks stops installation before enabling integration. Existing `.gitignore` and `.git/info/exclude` rules are preserved; an already ignored directory needs no new rule. Review broad or malformed rules from older installations manually.
 
-An existing hook is saved as `.git/hooks/pre-commit.ctx-kit-original`, preserving its contents, permissions, and any symlink. The wrapper runs an executable original first with the same working directory, arguments, and input. A nonzero exit blocks the commit and skips ctx-kit; a successful exit allows ctx-kit to run. A non-executable original remains saved and is skipped. Reinstalling an unchanged wrapper is safe; reinstalling an older inline integration migrates the known ctx-kit block while retaining the rest of the hook.
+Existing hooks are saved as `.git/hooks/pre-commit.ctx-kit-original` and `.git/hooks/post-commit.ctx-kit-original`, preserving bytes, permissions and symlinks. The pre-commit wrapper runs its executable original first with the same working directory, arguments and input. Its failure still blocks the commit. The ctx pre-commit step only reports a missing post-commit installation and returns success. The wrapper bytes from older installations remain recognized.
 
-With `git_sync.enabled` and `auto_log` both `true`, a normal project commit attempt can append a log **before** the commit. Its title uses staged file names and its summary contains a staged diff stat. It uses `pending` for both commit fields; it does not later attach the real commit hash or produce a semantic AI summary. A later hook or the commit itself can fail, leaving the pre-commit entry in place. Use the explicit work-unit closure workflow for validation results and outcomes.
+The post-commit wrapper captures the full HEAD commit ID before invoking the executable original post-commit hook. It passes through the original arguments and input, attempts ctx recording even if the original fails, and returns the original hook's exit code. Git has already created the commit at this point.
 
-These pending entries have `dirty: true`. Staged paths preserve their actual names, and both the file list and diff stat exclude the configured context directory literally, including already tracked context files. A context-only change adds no auto-log. Git metadata query errors stop the hook before adding a row and block the project commit; fix the reported cause before retrying.
+With `git_sync.enabled` and `auto_log` both `true`, post-commit records the captured commit's ID, author date, subject, body and file names using the same builder as `backfill`. Files inside the configured context directory are excluded literally, including force-tracked context paths. Empty and context-only commits are recorded with an empty file list. Message content can itself contain private details. The existing backfill convention joins subject and body and trims surrounding whitespace. The `branch` and `dirty` fields describe the project when post-commit observes it, including changes left by `--only` or partial staging and changes to already tracked context files. Backfill's empty branch and `dirty: false` are historical defaults. Author dates can put amended commits earlier in the timeline.
 
-The installed hook also snapshots context changes in the independent local Git repository. Context Git commands clear inherited repository-local Git environment variables so they use the context repository's own index; project inspection keeps the commit's active index, including `git commit --only`. ctx-kit contains no remote push step, but local Git and ignore rules are not a secrecy guarantee: already tracked files, separately configured remotes, exports, and generated bundles still require review.
+Under the shared writer lock, both machine writers recover an interrupted archive and check active plus archived commit references before adding a row. A reference already represented by any row prevents another machine-generated row. Explicit `log` calls can still record multiple work units for the same commit. Existing `pending` rows retain their original values as observations of earlier commit attempts whose success is unknown.
 
-The installer uses `.git/hooks/pre-commit` directly. A linked worktree with a `.git` file and a custom `core.hooksPath` are not supported automatically. See [hook troubleshooting](troubleshooting.md) before relying on automatic execution.
+After recording, the hook snapshots context changes in the independent local Git repository, clearing inherited project Git variables and suppressing recursive ctx recording. A failed log write or context snapshot reports its cause and a `backfill` recovery command on stderr. The project commit remains created. Repair the underlying error first, then recover missing records with `backfill`; use a later successful hook or the context repository's normal workflow to snapshot remaining local changes.
+
+Automatic merges made by `git merge` use a separate hook path. Recover their records with `backfill`; `merge --no-commit` followed by `git commit` uses post-commit. `--no-verify` still permits post-commit to run. The installer targets `.git/hooks/pre-commit` and `.git/hooks/post-commit`. A linked worktree with a `.git` file and custom `core.hooksPath` need separate integration. `hook status` warns about these layouts. Review [hook troubleshooting](troubleshooting.md) before relying on automatic execution.
+
 
 To remove the ctx-kit wrapper and disable Git sync:
 
@@ -313,11 +318,13 @@ bash ctx.sh hook uninstall
 bash ctx.sh hook status
 ```
 
-Uninstall restores the saved original hook exactly, including permissions or a symlink, or removes the wrapper if no original existed. It keeps context history, the ignore rule, and the independent context repository. Installation and removal refuse to overwrite a modified wrapper or conflicting backup, or proceed without a required backup; preserve those files and inspect the reported error before retrying.
+Uninstall restores each saved original hook exactly, including permissions or a symlink, or removes the wrapper if no original existed. It keeps context history, the ignore rule, and the independent context repository. Installation and removal refuse to overwrite a modified wrapper or conflicting backup, or proceed without a required backup; preserve those files and inspect the reported error before retrying.
 
 Both operations save configuration through [atomic replacement](configuration.md#configuration-writes). A failed configuration write or replacement preserves the existing JSON, but earlier hook, ignore-rule, or context-repository changes are not rolled back. Inspect `ctx.config.json` and `bash ctx.sh hook status` before retrying; after an uninstall failure, the original hook may already have been restored or the wrapper removed.
 
 ## Upgrade an existing installation
+
+After replacing `ctx.sh`, run `bash ctx.sh hook install` for installations using Git integration. Check both hooks with `bash ctx.sh hook status`, then use `bash ctx.sh backfill --limit 30` to recover the transition gap. Use `--all` when the gap exceeds 30 commits. Replacing the script alone keeps the older pre-commit wrapper, while both automatic logging and automatic context snapshots wait for post-commit installation.
 
 Keep a recoverable copy of your existing configuration and context, including customized rules. Obtain the new `ctx.sh` from a reviewed repository revision and replace the script at its current location. Preserve `ctx.config.json` and the directory selected by `source`.
 

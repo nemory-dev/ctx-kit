@@ -439,6 +439,7 @@ class StorageTests(unittest.TestCase):
 
     def test_backfill_rejects_ambiguous_legacy_commit_without_rewriting_history(self):
         self.initialize_git()
+        head = self.git("rev-parse", "HEAD")
         tree = self.git("rev-parse", "HEAD^{tree}")
         digest = hashlib.sha256 if len(self.git("rev-parse", "HEAD")) == 64 else hashlib.sha1
         seen = {}
@@ -448,16 +449,18 @@ class StorageTests(unittest.TestCase):
                 f"committer Storage Test <storage@example.invalid> 1700000000 +0000\n\nCollision {index}\n"
             ).encode("utf-8")
             prefix = digest(b"commit " + str(len(content)).encode("ascii") + b"\0" + content).hexdigest()[:4]
-            if prefix in seen:
+            if prefix in seen and not head.startswith(prefix):
                 previous = seen[prefix]
                 break
             seen[prefix] = content
+        collisions = []
         for payload in (previous, content):
             result = subprocess.run(
                 ["git", "hash-object", "-t", "commit", "-w", "--stdin"], input=payload,
                 cwd=self.project, env=self.env, capture_output=True, timeout=30,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+            collisions.append(result.stdout.decode().strip())
         entry = self.entry("Ambiguous legacy commit")
         entry["commit"] = prefix
         archived = self.archive / "timeline-legacy.jsonl"
@@ -471,6 +474,20 @@ class StorageTests(unittest.TestCase):
         self.assertIn("Ambiguous", result.stderr)
         self.assertEqual(self.timeline.read_bytes(), before)
         self.assertEqual(self.read_entries(archived), [entry])
+
+        config_path = self.project / "ctx.config.json"
+        config = json.loads(config_path.read_text())
+        config["git_sync"] = {"enabled": True, "auto_log": True}
+        config_path.write_text(json.dumps(config))
+        result = self.run_ctx("_hook_run_post_commit", head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.read_entries(self.timeline)[-1]["fullCommit"], head)
+        self.assertEqual(self.read_entries(archived), [entry])
+        current = self.timeline.read_bytes()
+        result = self.run_ctx("_hook_run_post_commit", collisions[0])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Ambiguous", result.stderr)
+        self.assertEqual(self.timeline.read_bytes(), current)
 
     def test_backfill_rejects_invalid_monthly_archives_before_rewriting_active_log(self):
         self.initialize_git()

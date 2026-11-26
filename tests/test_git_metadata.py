@@ -302,7 +302,7 @@ class GitMetadataTests(unittest.TestCase):
         self.assertEqual(entries[rename]["files"], [destination])
         self.assertEqual(entries[empty]["files"], [])
 
-    def test_installed_hook_preserves_staged_paths_and_records_pending_dirty_state(self):
+    def test_installed_hook_preserves_committed_paths_and_observes_dirty_state(self):
         self.initialize_git()
         self.success(self.run_ctx("hook", "install"))
         self.write_names(SPECIAL_NAMES)
@@ -310,7 +310,8 @@ class GitMetadataTests(unittest.TestCase):
         self.git("commit", "--quiet", "-m", "Commit special paths")
         entry = self.entries()[0]
         self.assertCountEqual(entry["files"], SPECIAL_NAMES)
-        self.assertEqual(entry["commit"], "pending")
+        self.assertEqual(entry["commit"], self.git("rev-parse", "--short", "HEAD"))
+        self.assertEqual(entry["fullCommit"], self.git("rev-parse", "HEAD"))
         self.assertTrue(entry["dirty"])
 
     def test_hook_excludes_literal_context_paths_even_when_force_staged(self):
@@ -336,9 +337,10 @@ class GitMetadataTests(unittest.TestCase):
         blob = self.git("hash-object", "-w", "--", "ctx[ab]/private.txt")
         self.git("update-index", "--cacheinfo", "100644", blob, "ctx[ab]/private.txt")
         self.git("commit", "--quiet", "-m", "Context only")
-        self.assertEqual(len(self.entries()), 1)
+        self.assertEqual(len(self.entries()), 2)
+        self.assertEqual(self.entries()[-1]["files"], [])
 
-    def test_hook_git_query_failure_blocks_commit_without_appending_history(self):
+    def test_post_hook_git_query_failure_warns_without_appending_history(self):
         self.initialize_git()
         self.success(self.run_ctx("hook", "install"))
         self.success(self.run_ctx("log", "--summary", "existing record"))
@@ -346,10 +348,12 @@ class GitMetadataTests(unittest.TestCase):
         parent = self.git("rev-parse", "HEAD")
         self.write_names(["app.txt"], "changed\n")
         self.git("add", "--", "app.txt")
-        self.fail_git_command("diff")
-        result = self.command("git", "commit", "--quiet", "-m", "must fail")
-        self.assert_failed_without_append(result, before)
-        self.assertEqual(self.git("rev-parse", "HEAD"), parent)
+        self.fail_git_command("log")
+        result = self.success(self.command("git", "commit", "--quiet", "-m", "committed"))
+        self.assertIn("injected Git metadata failure", result.stderr)
+        self.assertIn("backfill", result.stderr)
+        self.assertEqual(self.timeline.read_bytes(), before)
+        self.assertNotEqual(self.git("rev-parse", "HEAD"), parent)
 
 
 if __name__ == "__main__":

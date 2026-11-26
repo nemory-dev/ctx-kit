@@ -138,14 +138,14 @@ git config --get core.hooksPath
 bash ctx.sh hook status
 ```
 
-`core.hooksPath`가 설정되지 않았다면 `git config --get core.hooksPath`는 출력 없이 종료 코드 1을 반환합니다. 정상적인 결과입니다. 변경 전에 실제 사용 중인 `pre-commit` 파일을 로컬에서 확인하세요.
+`core.hooksPath`가 설정되지 않았다면 `git config --get core.hooksPath`는 출력 없이 종료 코드 1을 반환합니다. 정상적인 결과입니다. 변경 전에 실제 사용 중인 `pre-commit`·`post-commit` 파일을 로컬에서 확인하세요.
 
 | 확인 결과 | 의미와 안전한 다음 단계 |
 | --- | --- |
 | Git worktree처럼 `.git`이 파일임 | 설치기는 `.git` **디렉터리**를 요구하므로 정상 worktree에서도 `.git not found`를 표시할 수 있습니다. 수동 `log`·`backfill`을 사용하고 실제 Git 디렉터리를 쓰는 훅 연동은 저장소 담당자와 검토하세요. |
-| `core.hooksPath`가 설정됨 | 설치기와 `hook status`는 이 설정을 따르지 않고 `.git/hooks/pre-commit`을 사용합니다. “Installed”만으로 Git이 그 파일을 실행한다고 볼 수 없습니다. 기존 훅 체계를 검토한 뒤 그곳에 연동하세요. |
+| `core.hooksPath`가 설정됨 | 설치기와 `hook status`는 이 설정을 따르지 않고 `.git/hooks/pre-commit`·`.git/hooks/post-commit`을 대상으로 하며 status는 다른 실행 경로를 경고합니다. “Installed”만으로 Git이 그 파일을 실행한다고 볼 수 없습니다. 기존 훅 체계를 검토한 뒤 그곳에 연동하세요. |
 | 이전 인라인 훅이 ctx-kit 실행 전에 종료됨 | 갱신한 CLI로 `bash ctx.sh hook install`을 실행해 알려진 인라인 블록을 wrapper로 변환합니다. 실행 가능한 보관 원본을 먼저 실행하며, 원본이 0이 아닌 코드로 종료하면 여전히 커밋을 막고 ctx-kit을 실행하지 않습니다. |
-| wrapper 수정, 백업 충돌, 원본 백업 누락 | `.git/hooks/pre-commit`과 `.git/hooks/pre-commit.ctx-kit-original`이 있으면 보존합니다. 설치·제거 시 안전하지 않은 교체를 거부하므로 표시된 파일을 확인하고 의도한 원본을 복구한 뒤 재시도하세요. 오류를 우회하려고 백업을 삭제하지 마세요. |
+| wrapper 수정, 백업 충돌, 원본 백업 누락 | 두 훅 파일과 각각의 `.ctx-kit-original` 백업이 있으면 보존합니다. 설치·제거 시 안전하지 않은 교체를 거부하므로 표시된 파일을 확인하고 의도한 원본을 복구한 뒤 재시도하세요. 오류를 우회하려고 백업을 삭제하지 마세요. |
 | 훅에서 CLI를 찾지 못함 | 설치된 wrapper는 루트의 `ctx.sh`와 `scripts/ctx.sh`만 확인합니다. 지원되는 위치를 복원하세요. |
 | `Author identity unknown` 또는 로컬 Git 커밋 실패 | 컨텍스트는 독립 Git 저장소를 쓰며 설치 중 첫 로컬 커밋 오류는 숨겨질 수 있습니다. 아래 명령으로 해당 저장소의 작성자 설정을 확인하고, 의도한 작성자 정보를 직접 설정한 뒤 재시도하세요. |
 
@@ -156,7 +156,7 @@ git -C sample-context status --short
 git -C sample-context log -1 --oneline
 ```
 
-작성자 필드가 없으면 종료 코드 1이며, 커밋이 없는 저장소에서는 `git log`가 실패합니다. 설치는 `.gitignore`, 설정, 컨텍스트 Git 저장소, 훅을 바꾸는 작업입니다. 읽기 전용 복구가 아니므로 구조를 검토한 뒤 재설치하세요. 컨텍스트 쓰기나 로컬 커밋 실패는 바깥쪽 Git 커밋도 막을 수 있습니다. 원인을 해결한 뒤 재시도 전에 타임라인을 확인하세요. 자동 로그는 이미 기록되었을 수 있습니다.
+작성자 필드가 없으면 종료 코드 1이며, 커밋이 없는 저장소에서는 `git log`가 실패합니다. 설치는 `.gitignore`, 설정, 컨텍스트 Git 저장소, 훅을 바꾸는 작업입니다. 읽기 전용 복구가 아니므로 구조를 검토한 뒤 재설치하세요. post-commit 기록·snapshot 실패는 프로젝트 커밋이 생성된 뒤 경고합니다. 원인을 해결하고 타임라인을 확인한 뒤 backfill로 누락된 기록을 복구하세요. snapshot만 실패했다면 로그는 이미 기록됐을 수 있습니다.
 
 ## “Ignored”만으로 비공개를 보장할 수 없음
 
@@ -174,7 +174,7 @@ git diff --cached --name-only
 
 ## 잘못된 JSONL, 권한 오류, 로그 실패
 
-`Git rev-parse failed`, `Git branch failed`, `Git status failed`, `Git show failed`, `Git log failed`, `Git diff failed`는 메타데이터 조회 실패를 뜻합니다. 오류를 변경 없는 프로젝트나 빈 파일 목록으로 처리하지 않고, 행 추가나 활성 로그 재작성 전에 0이 아닌 코드로 종료합니다. 손상된 `.git` 디렉터리·파일도 오류이며, 저장소나 Git 실행 파일이 없는 프로젝트에서만 독립 로그 기록으로 처리합니다. 함께 출력한 Git 오류와 저장소·인덱스 권한을 확인하고, 기존 타임라인을 살펴본 뒤 재시도하세요. 설치된 자동 기록 훅의 Git 조회 오류는 바깥의 프로젝트 커밋도 막습니다.
+`Git rev-parse failed`, `Git branch failed`, `Git status failed`, `Git show failed`, `Git log failed`, `Git diff failed`는 메타데이터 조회 실패를 뜻합니다. 오류를 변경 없는 프로젝트나 빈 파일 목록으로 처리하지 않고, 행 추가나 활성 로그 재작성 전에 0이 아닌 코드로 종료합니다. 손상된 `.git` 디렉터리·파일도 오류이며, 저장소나 Git 실행 파일이 없는 프로젝트에서만 독립 로그 기록으로 처리합니다. 함께 출력한 Git 오류와 저장소·인덱스 권한을 확인하고, 기존 타임라인을 살펴본 뒤 재시도하세요. post-commit 기록의 Git 조회 오류는 프로젝트 커밋이 생성된 뒤 경고와 복구 명령을 출력합니다.
 
 쓰기 명령은 잘못된 JSONL에 대해 파일명과 줄 번호를 보고합니다. 예: `invalid JSON at line 2`, `expected a JSON object at line 1`. 비어 있지 않은 각 줄은 JSON 객체여야 합니다. `null`, 배열, 문자열은 올바른 레코드가 아닙니다. 빈 줄은 무시하며 마지막 줄의 개행이 없어도 유효한 객체라면 지원합니다.
 
@@ -210,7 +210,7 @@ PY
 bash ctx.sh timeline --limit 20 --json
 ```
 
-객체 문법 확인은 각 필드의 의미까지 검증하지는 않습니다. 잘못된 데이터에서 `timeline`이 traceback을 출력할 수 있으며 `export`도 이 실패를 전달합니다. 활성 로그를 진단하려면 `timeline --json`을 직접 실행하세요.
+객체 문법 확인은 각 필드의 의미까지 검증하지는 않습니다. 손상된 JSONL이나 객체가 아닌 행이 있으면 `timeline`은 파일 경로와 행 번호를 stderr에 출력하고 오류로 종료하며, `export`도 이 실패를 전달합니다. 문자열이 아닌 필드 값은 JSON 출력에서 원래 값을 유지하고 텍스트 출력에서는 JSON으로 표시합니다. 활성 로그를 진단하려면 `timeline --json`을 직접 실행하세요.
 
 `Refusing to replace non-regular file`, `Permission denied`, I/O 오류는 해당 경로의 유형, 권한, 저장 공간을 확인해야 합니다. 원자적 쓰기 기능은 로그·출력 대상 자리에 있는 디렉터리나 심볼릭 링크를 의도적으로 덮어쓰지 않습니다. 기존 항목을 보존하고 파일 유형 충돌을 검토해 해결하세요. 프로젝트 전체를 누구나 쓸 수 있는 권한으로 바꾸지 마세요.
 
@@ -220,7 +220,7 @@ bash ctx.sh timeline --limit 20 --json
 
 `Timed out waiting for context writer lock: .../.ctx.lock`는 다른 쓰기 작업이 잠금을 잡은 채 30초 대기 시간이 지났다는 뜻입니다. `.ctx.lock` 파일은 정상 종료 후에도 남습니다. 파일이 있다는 것만으로 잠금이 사용 중이라는 뜻은 아닙니다.
 
-다른 작업이 끝나기를 기다리거나 정상적으로 중지하세요. macOS에서는 `lsof sample-context/work-log/.ctx.lock`로 파일을 사용하는 프로세스를 확인할 수 있습니다. 사용 중인 잠금 파일을 삭제하면 다른 작업이 새 파일에 잠금을 잡아 동시 쓰기 보호가 깨질 수 있습니다. 쓰기 작업이 종료된 뒤 재시도하고, 이전 명령이 레코드를 추가했을 가능성이 있다면 타임라인부터 확인하세요. pre-commit 훅도 같은 잠금을 사용하므로 이 오류로 커밋이 막힐 수 있습니다.
+다른 작업이 끝나기를 기다리거나 정상적으로 중지하세요. macOS에서는 `lsof sample-context/work-log/.ctx.lock`로 파일을 사용하는 프로세스를 확인할 수 있습니다. 사용 중인 잠금 파일을 삭제하면 다른 작업이 새 파일에 잠금을 잡아 동시 쓰기 보호가 깨질 수 있습니다. 쓰기 작업이 종료된 뒤 재시도하고, 이전 명령이 레코드를 추가했을 가능성이 있다면 타임라인부터 확인하세요. post-commit 기록도 같은 잠금을 사용해 최대 30초 기다립니다. timeout 시 프로젝트 커밋은 생성된 상태로 경고하며, 원인을 해결한 뒤 backfill로 누락 기록을 복구합니다.
 
 ## 중단된 아카이브와 복구 저널
 

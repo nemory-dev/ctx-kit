@@ -166,14 +166,14 @@ git var GIT_AUTHOR_IDENT
 git config --get core.hooksPath
 ```
 
-The second command normally prints nothing and exits 1 when unset. The installer currently requires a normal `.git/` directory and writes `.git/hooks/pre-commit`; worktrees and custom hook paths need the [Git limitations](troubleshooting.md). Once you have checked that setup:
+The second command normally prints nothing and exits 1 when unset. The installer currently requires a normal `.git/` directory and writes `.git/hooks/pre-commit` and `.git/hooks/post-commit`; worktrees and custom hook paths need the [Git limitations](troubleshooting.md). Once you have checked that setup:
 
 ```bash
 bash ctx.sh hook install
 bash ctx.sh hook status
 ```
 
-This initializes a separate local Git repository inside the context directory, configures context exclusion, and enables Git sync. It can create local context commits. It does not push them. See [Workflows](workflows.md) for pre-commit behavior and disabling the integration.
+This initializes a separate local Git repository inside the context directory, configures context exclusion, and enables Git sync. It can create local context commits. It does not push them. See [Workflows](workflows.md) for successful-commit recording and disabling the integration.
 
 ## Windows
 

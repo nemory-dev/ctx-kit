@@ -107,7 +107,7 @@ Run commands from the project root. If installed under `scripts/`, use `bash scr
 | `bash ctx.sh archive --keep 30` | Archive completed tasks, retired decisions, and older logs |
 | `bash ctx.sh export` | Print selected context for review and manual sharing |
 | `bash ctx.sh generate project` | Combine files selected by `generate.project.collect` |
-| `bash ctx.sh hook install` | Opt into pre-commit logging and local context snapshots |
+| `bash ctx.sh hook install` | Opt into successful-commit logging and local context snapshots |
 | `bash ctx.sh hook status` / `hook uninstall` | Inspect or remove ctx-kit's hook integration |
 | `bash ctx.sh version` / `help` | Show the script version or command overview |
 
